@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "description": "外贸客户初筛流水线：输入/输出 Excel 列约定",
+  "input_columns": [
+    {
+      "name": "company_name",
+      "required": false,
+      "type": "string",
+      "description": "可为空：将从其它列或未映射列自动推断名称（首列文本等）"
+    },
+    { "name": "website", "required": false, "type": "string" },
+    { "name": "country_region", "required": false, "type": "string" },
+    { "name": "target_products", "required": false, "type": "string" },
+    { "name": "priority", "required": false, "type": "string" },
+    { "name": "notes", "required": false, "type": "string" },
+    {
+      "name": "evidence_paste",
+      "required": false,
+      "type": "string",
+      "description": "人工粘贴摘录；抓取弱/失败时用于补证与重跑"
+    },
+    {
+      "name": "contact_address",
+      "required": false,
+      "type": "string",
+      "description": "联系人地址（与中文表头「联系地址/联系人地址」等价）"
+    },
+    {
+      "name": "contact_phone",
+      "required": false,
+      "type": "string",
+      "description": "固定电话（与「固定电话」等价）"
+    },
+    {
+      "name": "contact_email",
+      "required": false,
+      "type": "string",
+      "description": "联系人邮箱"
+    },
+    {
+      "name": "contact_name",
+      "required": false,
+      "type": "string",
+      "description": "联系人姓名"
+    }
+  ],
+  "output_columns_append": [
+    { "name": "product_fit_score", "type": "int" },
+    { "name": "product_fit_reasons", "type": "string" },
+    { "name": "capability_score", "type": "int" },
+    { "name": "capability_signals", "type": "string" },
+    { "name": "reputation_facts", "type": "string" },
+    { "name": "reputation_concerns", "type": "string" },
+    { "name": "reputation_sources", "type": "string" },
+    { "name": "reputation_safety_score", "type": "int" },
+    { "name": "buyer_seller_role", "type": "string" },
+    { "name": "buyer_seller_reason", "type": "string" },
+    { "name": "deal_recommendation", "type": "string" },
+    { "name": "next_action", "type": "string" },
+    { "name": "confidence", "type": "float" },
+    { "name": "data_quality", "type": "string" },
+    { "name": "fetched_pages", "type": "string" },
+    { "name": "search_fallback_used", "type": "string" },
+    { "name": "errors", "type": "string" },
+    { "name": "overall_score_computed", "type": "float" },
+    { "name": "manual_review_flag", "type": "string" },
+    { "name": "eval_json", "type": "string" }
+  ],
+  "weights_default": {
+    "product_fit": 0.45,
+    "capability": 0.25,
+    "reputation_safety": 0.3
+  },
+  "review_rules_default": {
+    "flag_if_overall_gte": 4.0,
+    "flag_if_reputation_safety_lte": 2,
+    "flag_if_concerns_keyword": ["诉讼", "欺诈", "scam", "fraud"]
+  },
+  "summary_export_columns": [
+    { "field": "_source_row_1", "header": "数据行号" },
+    { "field": "company_name", "header": "客户名称" },
+    { "field": "website", "header": "网站" },
+    { "field": "country_region", "header": "国家" },
+    { "field": "contact_address", "header": "联系人地址" },
+    { "field": "contact_phone", "header": "固定电话" },
+    { "field": "contact_email", "header": "联系人邮箱" },
+    { "field": "contact_name", "header": "联系人姓名" },
+    { "field": "buyer_seller_role_display", "header": "买方/卖方" },
+    { "field": "buyer_seller_reason", "header": "角色判断依据" },
+    { "field": "product_fit_reasons", "header": "产品匹配说明" },
+    { "field": "product_fit_score", "header": "产品匹配分" },
+    { "field": "capability_score", "header": "能力评分" },
+    { "field": "capability_signals", "header": "能力依据" },
+    { "field": "reputation_facts", "header": "资信要点" },
+    { "field": "reputation_safety_score", "header": "资信安全分" },
+    { "field": "deal_recommendation_display", "header": "合作建议" },
+    { "field": "manual_review_flag", "header": "需复核" },
+    { "field": "overall_score_computed", "header": "综合分" }
+  ]
+}

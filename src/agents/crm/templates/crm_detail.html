@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block title %}{{ customer.company_name or '客户详情' }} - 外贸客户平台{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="/static/crm/css/crm.css" />
+{% endblock %}
+
+{% block content %}
+<div class="crm-page">
+  <a href="/crm/" class="back-link">&larr; 返回客户列表</a>
+
+  <!-- Header -->
+  <div class="detail-header" style="margin-top:1rem">
+    <div class="detail-score-ring {% if customer.overall_score_computed and customer.overall_score_computed >= 4 %}score-high{% elif customer.overall_score_computed and customer.overall_score_computed >= 2.5 %}score-medium{% else %}score-low{% endif %}">
+      <span class="score-num">{{ "%.1f"|format(customer.overall_score_computed or 0) }}</span>
+      <span class="score-label">综合评分</span>
+    </div>
+    <div>
+      <h1 style="margin-bottom:0.25rem">{{ customer.company_name or '未命名' }}</h1>
+      <p style="color:var(--pico-muted-color);margin:0">
+        {% if customer.website %}<a href="{{ customer.website }}" target="_blank">{{ customer.website }}</a> &middot; {% endif %}
+        {{ customer.country_region or '' }}
+      </p>
+      <div style="margin-top:0.5rem;display:flex;gap:0.5rem;flex-wrap:wrap">
+        <span class="badge badge-{% if customer.deal_recommendation=='high_intent' %}green{% elif customer.deal_recommendation=='watch' %}yellow{% else %}gray{% endif %}">
+          {% if customer.deal_recommendation=='high_intent' %}高意向{% elif customer.deal_recommendation=='watch' %}观察{% else %}不建议{% endif %}
+        </span>
+        {% if customer.manual_review_flag == 'YES' %}
+        <span class="badge badge-red">需复核</span>
+        {% endif %}
+        {% if customer.buyer_seller_role %}
+        <span class="badge badge-blue">{{ customer.buyer_seller_role }}</span>
+        {% endif %}
+        <span class="badge badge-purple">置信度 {{ "%.0f"|format((customer.confidence or 0)*100) }}%</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scores Grid -->
+  <div class="detail-grid">
+    <div class="stat-card">
+      <h4>产品匹配</h4>
+      <div class="score-badge {% if customer.product_fit_score and customer.product_fit_score >= 4 %}score-high{% elif customer.product_fit_score and customer.product_fit_score >= 2 %}score-medium{% else %}score-low{% endif %}">{{ customer.product_fit_score or '-' }}</div>
+      <p style="font-size:0.85rem;margin-top:0.5rem">{{ customer.product_fit_reasons or '-' }}</p>
+    </div>
+    <div class="stat-card">
+      <h4>能力评分</h4>
+      <div class="score-badge {% if customer.capability_score and customer.capability_score >= 4 %}score-high{% elif customer.capability_score and customer.capability_score >= 2 %}score-medium{% else %}score-low{% endif %}">{{ customer.capability_score or '-' }}</div>
+      <p style="font-size:0.85rem;margin-top:0.5rem">{{ customer.capability_signals or '-' }}</p>
+    </div>
+    <div class="stat-card">
+      <h4>资信安全</h4>
+      <div class="score-badge {% if customer.reputation_safety_score and customer.reputation_safety_score >= 4 %}score-high{% elif customer.reputation_safety_score and customer.reputation_safety_score >= 2 %}score-medium{% else %}score-low{% endif %}">{{ customer.reputation_safety_score or '-' }}</div>
+      <p style="font-size:0.85rem;margin-top:0.5rem">{{ customer.reputation_concerns or '无重大顾虑' }}</p>
+    </div>
+  </div>
+
+  <!-- Detail Info Grid -->
+  <div class="detail-grid" style="margin-top:1.5rem">
+    <div class="stat-card">
+      <h4>联系信息</h4>
+      <dl>
+        <dt>联系人</dt><dd>{{ customer.contact_name or '-' }}</dd>
+        <dt>邮箱</dt><dd>{{ customer.contact_email or '-' }}</dd>
+        <dt>电话</dt><dd>{{ customer.contact_phone or '-' }}</dd>
+        <dt>地址</dt><dd>{{ customer.contact_address or '-' }}</dd>
+      </dl>
+    </div>
+    <div class="stat-card">
+      <h4>业务信息</h4>
+      <dl>
+        <dt>目标产品</dt><dd>{{ customer.target_products or '-' }}</dd>
+        <dt>优先级</dt><dd>{{ customer.priority or '-' }}</dd>
+        <dt>买方/卖方</dt><dd>{{ customer.buyer_seller_role or '-' }}</dd>
+        <dt>角色依据</dt><dd>{{ customer.buyer_seller_reason or '-' }}</dd>
+      </dl>
+    </div>
+    <div class="stat-card">
+      <h4>合作建议</h4>
+      <p style="font-weight:600">{{ customer.deal_recommendation or '-' }}</p>
+      <p style="font-size:0.85rem">{{ customer.next_action or '-' }}</p>
+      <hr />
+      <h4>资信详情</h4>
+      <p style="font-size:0.85rem">{{ customer.reputation_facts or '-' }}</p>
+      {% if customer.reputation_sources %}
+      <p style="font-size:0.8rem;color:var(--pico-muted-color)">来源: {{ customer.reputation_sources }}</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Data quality & errors -->
+  <div class="stat-card" style="margin-top:1rem">
+    <h4>数据质量</h4>
+    <p>质量等级: <strong>{{ customer.data_quality or '-' }}</strong> &middot;
+       抓取页面: {{ customer.fetched_pages or '无' }}
+    </p>
+    {% if customer.errors %}
+    <p style="color:var(--danger-color);font-size:0.85rem">错误: {{ customer.errors }}</p>
+    {% endif %}
+  </div>
+
+  <!-- Notes -->
+  {% if customer.notes %}
+  <div class="stat-card" style="margin-top:1rem">
+    <h4>备注</h4>
+    <p style="font-size:0.85rem;white-space:pre-wrap">{{ customer.notes }}</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

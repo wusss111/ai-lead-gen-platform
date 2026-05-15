@@ -1,0 +1,87 @@
+# 公司内部：客户评估网页 + 异步 Worker
+#
+# 使用前：复制 .env.example 为 .env 并填写 DEEPSEEK_API_KEY；宿主机需存在 output/catalog.json（供只读挂载）。
+#   docker compose up -d --build
+# 浏览器：http://127.0.0.1:8000 （若配置了 INTERNAL_WEB_BASIC_USER 则需 Basic 认证）
+#
+# 拉取 docker.io 失败时，可在 .env 中设置镜像（示例值需按你当前可用的镜像站文档替换）：
+#   PYTHON_IMAGE=python:3.11-slim-bookworm
+#   REDIS_IMAGE=redis:7-alpine
+#
+# 若出现 Work-horse terminated / OOM：Docker Desktop → Resources → Memory 建议 ≥ 6GB，
+# 可酌情把 worker 的 mem_limit 改为 2g。
+
+services:
+  redis:
+    image: ${REDIS_IMAGE:-redis:7-alpine}
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim-bookworm}
+    image: creat-agent-internal:local
+    command: uvicorn internal_web.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      INTERNAL_WEB_DATA_DIR: /data
+    env_file:
+      - .env
+    volumes:
+      - web_data:/data
+      - ./output:/app/output:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim-bookworm}
+    image: creat-agent-internal:local
+    command: rq worker -u redis://redis:6379/0 eval_jobs --verbose
+    init: true
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      INTERNAL_WEB_DATA_DIR: /data
+      MALLOC_ARENA_MAX: "2"
+    env_file:
+      - .env
+    volumes:
+      - web_data:/data
+      - ./output:/app/output:ro
+    shm_size: "1gb"
+    mem_limit: 3g
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  web_data:

@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}客户资源 - 外贸客户平台{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="/static/crm/css/crm.css" />
+{% endblock %}
+
+{% block content %}
+<div class="crm-page">
+  <div class="crm-hero">
+    <h1>客户资源</h1>
+    <p>浏览和管理已评估的潜客数据</p>
+  </div>
+
+  <!-- Filter Bar -->
+  <div class="filter-bar">
+    <input type="search" id="searchInput" placeholder="搜索公司名、联系人、邮箱..."
+           oninput="debounceSearch()" />
+    <select id="filterRec" onchange="loadCustomers()">
+      <option value="">全部推荐</option>
+      <option value="high_intent">高意向</option>
+      <option value="watch">观察</option>
+      <option value="no">不建议</option>
+    </select>
+    <select id="filterReview" onchange="loadCustomers()">
+      <option value="">全部复核状态</option>
+      <option value="YES">需复核</option>
+      <option value="">正常</option>
+    </select>
+    <select id="sortBy" onchange="loadCustomers()">
+      <option value="-created_at">最近添加</option>
+      <option value="-overall_score_computed">综合分降序</option>
+      <option value="overall_score_computed">综合分升序</option>
+      <option value="company_name">公司名 A-Z</option>
+    </select>
+    <button class="btn-export" onclick="exportData()" title="导出 JSON">&#128229; 导出</button>
+  </div>
+
+  <!-- Stats row -->
+  <div class="stats-row" id="statsRow" style="display:none">
+    <span>共 <strong id="statTotal">0</strong> 条记录</span>
+    <span id="statHigh" style="display:none"><span class="badge badge-green">高意向</span> <strong id="cntHigh">0</strong></span>
+    <span id="statWatch" style="display:none"><span class="badge badge-yellow">观察</span> <strong id="cntWatch">0</strong></span>
+    <span id="statReview" style="display:none"><span class="badge badge-red">需复核</span> <strong id="cntReview">0</strong></span>
+  </div>
+
+  <!-- Table -->
+  <div class="table-wrap">
+    <table class="data-table" id="customerTable">
+      <thead>
+        <tr>
+          <th>公司名称</th>
+          <th>国家</th>
+          <th>联系人</th>
+          <th>邮箱</th>
+          <th>综合分</th>
+          <th>推荐</th>
+          <th>复核</th>
+          <th>邮件</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody">
+        <tr><td colspan="8" class="empty-state"><div class="empty-icon">&#128269;</div><p>暂无数据，请先完成客户评估</p></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Pagination -->
+  <div class="pagination" id="pagination" style="display:none"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="/static/crm/js/crm.js"></script>
+{% endblock %}

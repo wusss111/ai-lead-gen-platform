@@ -1,0 +1,28 @@
+# Git 与 IDE
+.git
+.gitignore
+.cursor
+
+# 虚拟环境
+.venv
+venv
+
+# 本地与敏感（运行时由 compose 挂载或 env_file 注入）
+.env
+var
+
+# 体积大、镜像内不需要
+cache
+__pycache__
+*.py[cod]
+.pytest_cache
+*.egg-info
+.mypy_cache
+.ruff_cache
+
+# 测试与文档（生产镜像可省略）
+tests
+docs
+
+# 宿主机产物目录（容器内通过 volume 挂载 ./output，构建时不必打进上下文）
+output

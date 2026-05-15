@@ -1,0 +1,61 @@
+/* CRM — customer list & detail */
+
+.crm-page { max-width: 1280px; margin: 0 auto; }
+
+/* Detail page */
+.back-link {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 0.9rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-bottom: 1rem;
+  transition: color var(--duration-fast);
+}
+.back-link:hover { color: var(--ocean-300); }
+
+.detail-header {
+  display: flex; gap: 1.5rem; align-items: flex-start;
+  padding: 1.5rem;
+  background: var(--bg-card);
+  border: var(--border-card);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.detail-card {
+  background: var(--bg-card);
+  border: var(--border-card);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem;
+}
+
+dl { margin: 0; }
+dt {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-top: 0.75rem;
+  font-weight: 600;
+}
+dt:first-child { margin-top: 0; }
+dd {
+  margin: 0.15rem 0 0;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+@media (max-width: 768px) {
+  .detail-header { flex-direction: column; }
+  .detail-grid { grid-template-columns: 1fr; }
+}

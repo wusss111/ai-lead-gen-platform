@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}外贸客户平台 — AI 驱动客户运营{% endblock %}
+{% block content %}
+<div class="hero">
+  <h1>外贸客户平台</h1>
+  <p>客户评估 · 资源管理 · 询盘邮件 — AI 驱动一站式外贸客户运营</p>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.25rem; max-width: 960px; margin: 1.5rem auto 0;">
+  {% for agent in nav_agents %}
+  <a href="/{{ agent.name }}/" class="stat-card" style="text-decoration: none; color: inherit; display: block;">
+    <div class="card-header">
+      <span class="card-icon">{% if agent.nav and agent.nav.icon %}{{ agent.nav.icon | safe }}{% else %}&#9672;{% endif %}</span>
+      <div>
+        <h3>{{ agent.display_name }}</h3>
+        <p>{{ agent.description }}</p>
+      </div>
+    </div>
+  </a>
+  {% endfor %}
+
+  {% if not nav_agents %}
+  <div class="empty-state">
+    <div class="empty-icon">&#128736;</div>
+    <h3>暂无已注册的模块</h3>
+    <p>请在 src/agents/ 下创建 Agent 目录并注册。</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

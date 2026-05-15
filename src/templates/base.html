@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}外贸客户平台{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/platform.css" />
+  {% block head_extra %}{% endblock %}
+</head>
+<body>
+  <nav class="platform-nav">
+    <div class="nav-brand">
+      <a href="/" class="brand-link">
+        <span class="brand-icon">&#9951;</span>
+        <strong>外贸客户平台</strong>
+      </a>
+    </div>
+    <ul class="nav-links">
+      {% for agent in nav_agents %}
+      <li>
+        <a href="/{{ agent.name }}/"
+           class="nav-item {% if active_agent == agent.name %}active{% endif %}">
+          <span class="nav-icon">{% if agent.nav and agent.nav.icon %}{{ agent.nav.icon | safe }}{% else %}&#9672;{% endif %}</span>
+          {{ agent.display_name }}
+        </a>
+      </li>
+      {% endfor %}
+    </ul>
+    <div class="nav-actions">
+      <button class="theme-toggle" onclick="toggleTheme()" title="切换明暗模式">
+        &#9788;
+      </button>
+    </div>
+  </nav>
+
+  <main class="platform-main">
+    {% block content %}{% endblock %}
+  </main>
+
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+  <script type="module" src="/static/js/api.js"></script>
+  <script type="module" src="/static/js/utils.js"></script>
+  <script>
+    (function() {
+      const saved = localStorage.getItem('platform-theme');
+      if (saved) document.documentElement.setAttribute('data-theme', saved);
+    })();
+    function toggleTheme() {
+      const html = document.documentElement;
+      const current = html.getAttribute('data-theme');
+      const next = current === 'dark' ? 'light' : 'dark';
+      html.setAttribute('data-theme', next);
+      localStorage.setItem('platform-theme', next);
+    }
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

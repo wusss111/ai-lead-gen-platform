@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://creat_agent.local/schemas/eval_result.schema.json",
+  "title": "CustomerEvalLLMResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "product_fit_score",
+    "product_fit_reasons",
+    "capability_score",
+    "capability_signals",
+    "reputation_risk",
+    "reputation_safety_score",
+    "buyer_seller_role",
+    "buyer_seller_reason",
+    "deal_recommendation",
+    "next_action",
+    "confidence",
+    "data_quality",
+    "citations",
+    "catalog_version_note"
+  ],
+  "properties": {
+    "product_fit_score": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "product_fit_reasons": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" }
+    },
+    "capability_score": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "capability_signals": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "reputation_risk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["facts", "concerns", "sources"],
+      "properties": {
+        "facts": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "concerns": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "sources": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "reputation_safety_score": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "buyer_seller_role": {
+      "type": "string",
+      "description": "相对我方（供货方）而言，对方在证据中呈现的主角色",
+      "enum": ["buyer", "seller", "both", "unclear"]
+    },
+    "buyer_seller_reason": {
+      "type": "string",
+      "minLength": 1,
+      "description": "简体中文：为何判断为买方/卖方/兼营/不明，引用证据要点"
+    },
+    "deal_recommendation": {
+      "type": "string",
+      "enum": ["high_intent", "watch", "no"]
+    },
+    "next_action": { "type": "string" },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "data_quality": {
+      "type": "string",
+      "enum": ["high", "medium", "low"]
+    },
+    "citations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim", "source_url", "source_snippet"],
+        "properties": {
+          "claim": { "type": "string" },
+          "source_url": { "type": "string" },
+          "source_snippet": { "type": "string" }
+        }
+      }
+    },
+    "catalog_version_note": { "type": "string" }
+  }
+}

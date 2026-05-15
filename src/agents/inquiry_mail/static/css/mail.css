@@ -1,0 +1,72 @@
+/* Inquiry Mail — email generation & sending */
+
+.mail-page { max-width: 900px; margin: 0 auto; }
+
+.mail-card {
+  background: var(--bg-card);
+  border: var(--border-card);
+  border-radius: var(--radius-lg);
+  padding: 1.5rem;
+  margin-bottom: 1.25rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.step-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px; height: 30px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, var(--ocean-500), var(--ocean-300));
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+/* SMTP banner */
+.smtp-banner {
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  margin-bottom: 1rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+.smtp-banner.warn { background: rgba(239, 71, 111, 0.1); color: var(--color-danger); }
+.smtp-banner.ok   { background: rgba(6, 214, 160, 0.1); color: var(--color-success); }
+
+/* Email preview card */
+.email-preview {
+  border: var(--border-card);
+  border-radius: var(--radius-md);
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+  background: var(--bg-surface);
+  transition: all var(--duration-fast);
+}
+.email-preview:hover { border-color: rgba(255,255,255,0.12); }
+.email-preview.skipped { opacity: 0.4; }
+
+.email-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.email-preview-body {
+  background: var(--bg-input);
+  border-radius: var(--radius-md);
+  padding: 0.85rem;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  max-height: 200px;
+  overflow-y: auto;
+  color: var(--text-secondary);
+  font-family: var(--font-body);
+  line-height: 1.6;
+}
+
+.send-ok   { color: var(--color-success); font-weight: 600; font-size: 0.8rem; }
+.send-fail { color: var(--color-danger); font-weight: 600; font-size: 0.8rem; }

@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}客户评估 - 外贸客户平台{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="/static/customer-eval/css/eval.css" />
+{% endblock %}
+
+{% block content %}
+<div class="eval-page">
+  <!-- Hero -->
+  <div class="eval-hero">
+    <h1>客户评估</h1>
+    <p>上传 Excel 表格，AI 自动评估潜客质量、契合度与跟进优先级</p>
+  </div>
+
+  <div class="eval-layout">
+    <!-- Upload card -->
+    <div class="eval-card">
+      <div class="card-header">
+        <span class="card-icon">&#128229;</span>
+        <div>
+          <h3>上传数据</h3>
+          <p class="card-desc">支持 .xlsx 格式，列名中英文自动映射</p>
+        </div>
+      </div>
+
+      <form id="evalForm" onsubmit="return false;">
+        <div class="upload-zone" id="uploadZone">
+          <input type="file" name="file" accept=".xlsx" required
+                 id="fileInput" style="display:none"
+                 onchange="onFileSelected(this)" />
+          <div class="upload-prompt" id="uploadPrompt" onclick="document.getElementById('fileInput').click()">
+            <div class="upload-icon-big">&#128196;</div>
+            <div class="upload-text">点击选择 .xlsx 文件</div>
+            <div class="upload-hint" id="fileNameHint">或将文件拖放到此处</div>
+          </div>
+        </div>
+
+        <div class="eval-options">
+          <label class="option-row">
+            <input type="checkbox" name="dry_run" />
+            <span>试运行</span>
+            <small>仅校验列，不调用 AI</small>
+          </label>
+          <label class="option-row">
+            <input type="checkbox" name="no_fetch" />
+            <span>不抓取网站</span>
+            <small>仅用表格与粘贴证据</small>
+          </label>
+        </div>
+
+        <div class="eval-params">
+          <label>每批行数 <input type="number" name="batch_size" min="1" placeholder="留空=一次跑完" /></label>
+        </div>
+
+        <button type="submit" class="btn-primary-full" id="submitBtn" onclick="startEval()">
+          <span id="btnText">&#9889; 开始评估</span>
+          <span id="btnSpinner" class="spinner" style="display:none"></span>
+        </button>
+      </form>
+    </div>
+
+    <!-- Progress card -->
+    <div class="eval-card" id="progressCard" style="display:none">
+      <div class="card-header">
+        <span class="card-icon">&#9889;</span>
+        <div>
+          <h3>评估进度</h3>
+          <p class="card-desc" id="progressPhase">等待中...</p>
+        </div>
+      </div>
+      <div class="progress-wrap" style="margin: 1rem 0;">
+        <div class="progress-bar" id="progressBar" style="width:0%"></div>
+      </div>
+      <div style="display:flex; justify-content:space-between; font-size:0.85rem; color:var(--pico-muted-color)">
+        <span id="progressLabel">排队中...</span>
+        <span id="progressPct">0%</span>
+      </div>
+      <div id="resultArea" style="margin-top:1rem"></div>
+    </div>
+  </div>
+
+  <!-- Info -->
+  <div class="eval-info">
+    <details>
+      <summary>输入列说明</summary>
+      <div class="grid" style="margin-top:0.5rem">
+        <div><strong>company_name</strong>（必填）— 公司名</div>
+        <div><strong>website</strong> — 官网 URL</div>
+        <div><strong>country_region</strong> — 国家/地区</div>
+        <div><strong>target_products</strong> — 目标产品线</div>
+        <div><strong>contact_name / contact_email</strong> — 联系人</div>
+        <div><strong>evidence_paste</strong> — 人工粘贴摘录</div>
+      </div>
+    </details>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="/static/customer-eval/js/eval_main.js"></script>
+{% endblock %}

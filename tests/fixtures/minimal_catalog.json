@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "catalog_version": "test-fixture",
+  "source_sha256": "0" * 64,
+  "categories": [
+    {
+      "sheet": "数字表",
+      "products": [
+        {
+          "model": "DT830L digital multimeter",
+          "features": "入门级数字万用表，带背光。"
+        }
+      ]
+    }
+  ]
+}

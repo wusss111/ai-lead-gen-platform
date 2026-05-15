@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}询盘邮件 - 外贸客户平台{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="/static/inquiry-mail/css/mail.css" />
+{% endblock %}
+
+{% block content %}
+<div class="mail-page">
+  <div class="mail-hero">
+    <h1>询盘邮件</h1>
+    <p>AI 根据评估结果自动生成个性化开发信，确认后批量发送</p>
+  </div>
+
+  <!-- SMTP Status -->
+  <div id="smtpBanner" class="smtp-banner" style="display:none"></div>
+
+  <!-- Step 1: Select Customers -->
+  <div class="mail-card" id="stepSelect">
+    <div class="card-header">
+      <span class="step-badge">1</span>
+      <div>
+        <h3>选择客户</h3>
+        <p class="card-desc">从客户资源中选择要发送询盘邮件的客户</p>
+      </div>
+    </div>
+    <div class="filter-bar" style="margin-bottom:0.75rem">
+      <input type="search" id="searchInput" placeholder="搜索公司名或邮箱..." oninput="debounceLoad()" />
+      <select id="filterRec" onchange="loadEmailable()">
+        <option value="">全部推荐</option>
+        <option value="high_intent">高意向</option>
+        <option value="watch">观察</option>
+      </select>
+      <button class="btn-primary" onclick="selectAll()" style="white-space:nowrap">全选</button>
+      <button class="btn-secondary" onclick="deselectAll()" style="white-space:nowrap">取消全选</button>
+    </div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr>
+          <th><input type="checkbox" id="checkAll" onchange="toggleAll(this)" /></th>
+          <th>公司</th><th>联系人</th><th>邮箱</th><th>综合分</th><th>推荐</th><th>邮件状态</th>
+        </tr></thead>
+        <tbody id="customerTableBody">
+          <tr><td colspan="7" class="empty-state"><p>加载中...</p></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div style="margin-top:1rem;text-align:right">
+      <select id="langSelect" style="display:inline;width:auto;margin-right:0.5rem">
+        <option value="auto">语言：自动检测</option>
+        <option value="en">强制英文</option>
+        <option value="zh">强制中文</option>
+      </select>
+      <span id="selectCount" style="font-size:0.85rem;color:var(--pico-muted-color);margin-right:1rem">已选 0 位</span>
+      <button class="btn-primary-full" style="display:inline;width:auto;padding:0.5rem 1.5rem" onclick="startGenerate()" id="btnGenerate">
+        &#9889; 生成邮件
+      </button>
+    </div>
+  </div>
+
+  <!-- Step 2: Progress -->
+  <div class="mail-card" id="stepProgress" style="display:none">
+    <div class="card-header">
+      <span class="step-badge">2</span>
+      <div>
+        <h3>生成进度</h3>
+        <p class="card-desc" id="progressPhase">等待中...</p>
+      </div>
+    </div>
+    <div class="progress-wrap"><div class="progress-bar" id="progressBar" style="width:0%"></div></div>
+    <div style="display:flex;justify-content:space-between;font-size:0.85rem;color:var(--pico-muted-color);margin-top:0.3rem">
+      <span id="progressLabel">准备中...</span>
+      <span id="progressPct">0%</span>
+    </div>
+  </div>
+
+  <!-- Step 3: Preview & Send -->
+  <div class="mail-card" id="stepPreview" style="display:none">
+    <div class="card-header">
+      <span class="step-badge">3</span>
+      <div>
+        <h3>预览与发送</h3>
+        <p class="card-desc">检查邮件内容，勾选要发送的，点击发送</p>
+      </div>
+    </div>
+    <div id="previewList"></div>
+    <div style="margin-top:0.75rem;display:flex;align-items:center;gap:0.5rem">
+      <label style="font-size:0.85rem;display:flex;align-items:center;gap:0.3rem;cursor:pointer">
+        <input type="checkbox" id="chkTimezone" checked onchange="updateSendMode()" />
+        时区感知（仅发送当前在上班的客户）
+      </label>
+    </div>
+    <div style="margin-top:1rem;text-align:right">
+      <button class="btn-primary-full" style="display:inline;width:auto;padding:0.5rem 1.5rem" onclick="startSend()" id="btnSend">
+        &#9993; 发送选中邮件
+      </button>
+    </div>
+  </div>
+
+  <!-- Step 4: Send Results -->
+  <div class="mail-card" id="stepResult" style="display:none">
+    <div class="card-header">
+      <span class="step-badge">4</span>
+      <div>
+        <h3>发送结果</h3>
+        <p class="card-desc" id="sendResultDesc"></p>
+      </div>
+    </div>
+    <div id="sendResults"></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="/static/inquiry-mail/js/mail.js"></script>
+{% endblock %}

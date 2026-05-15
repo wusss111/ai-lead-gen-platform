@@ -1,0 +1,57 @@
+/* Customer Eval — upload & progress */
+
+.eval-page { max-width: 800px; margin: 0 auto; }
+
+.eval-layout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.25rem;
+}
+@media (max-width: 768px) { .eval-layout { grid-template-columns: 1fr; } }
+
+/* Options */
+.eval-options { margin-bottom: 1rem; }
+
+.option-row {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--duration-fast);
+  font-size: 0.9rem;
+}
+.option-row:hover { background: rgba(255,255,255,0.03); }
+.option-row small { color: var(--text-muted); }
+
+.eval-params { margin-bottom: 1.25rem; }
+.eval-params label { font-size: 0.85rem; font-weight: 500; }
+.eval-params input { max-width: 160px; }
+
+/* Result area */
+.result-item {
+  padding: 0.65rem 0.85rem;
+  margin-top: 0.5rem;
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+.result-item.success { background: rgba(6, 214, 160, 0.1); color: var(--color-success); }
+.result-item.error   { background: rgba(239, 71, 111, 0.1); color: var(--color-danger); }
+
+.eval-info {
+  margin-top: 1.5rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+.eval-info summary {
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.eval-info .grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 0.5rem;
+}
+
+[data-theme="light"] .option-row:hover { background: rgba(0,0,0,0.03); }
