@@ -7,60 +7,90 @@
 
 {% block content %}
 <div class="eval-page">
-  <!-- Hero -->
+
   <div class="eval-hero">
     <h1>客户评估</h1>
-    <p>上传 Excel 表格，AI 自动评估潜客质量、契合度与跟进优先级</p>
+    <p>导入客户数据，AI 自动评估潜客质量与跟进优先级</p>
   </div>
 
   <div class="eval-layout">
-    <!-- Upload card -->
-    <div class="eval-card">
+    <!-- ====== MAIN CARD ====== -->
+    <div class="eval-card" style="grid-row: span 2">
       <div class="card-header">
         <span class="card-icon">&#128229;</span>
         <div>
-          <h3>上传数据</h3>
-          <p class="card-desc">支持 .xlsx 格式，列名中英文自动映射</p>
+          <h3>导入客户</h3>
+          <p class="card-desc">Excel · CSV · 手动输入网址</p>
         </div>
       </div>
 
-      <form id="evalForm" onsubmit="return false;">
-        <div class="upload-zone" id="uploadZone">
-          <input type="file" name="file" accept=".xlsx" required
-                 id="fileInput" style="display:none"
-                 onchange="onFileSelected(this)" />
-          <div class="upload-prompt" id="uploadPrompt" onclick="document.getElementById('fileInput').click()">
+      <!-- Tab switcher -->
+      <div class="eval-tabs">
+        <button class="eval-tab active" data-tab="xlsx" type="button">&#128196; Excel 上传</button>
+        <button class="eval-tab" data-tab="csv" type="button">&#128195; CSV 上传</button>
+        <button class="eval-tab" data-tab="url" type="button">&#127760; 网址录入</button>
+      </div>
+
+      <!-- Tab: Excel -->
+      <div id="tabXlsx" class="eval-tab-panel">
+        <div class="upload-zone">
+          <input type="file" accept=".xlsx" id="fileInputXlsx" style="display:none" />
+          <div class="upload-prompt" id="uploadPromptXlsx" onclick="document.getElementById('fileInputXlsx').click()">
             <div class="upload-icon-big">&#128196;</div>
             <div class="upload-text">点击选择 .xlsx 文件</div>
-            <div class="upload-hint" id="fileNameHint">或将文件拖放到此处</div>
+            <div class="upload-hint" id="hintXlsx">支持中英文列名自动映射，拖放亦可</div>
           </div>
         </div>
+      </div>
 
-        <div class="eval-options">
-          <label class="option-row">
-            <input type="checkbox" name="dry_run" />
-            <span>试运行</span>
-            <small>仅校验列，不调用 AI</small>
-          </label>
-          <label class="option-row">
-            <input type="checkbox" name="no_fetch" />
-            <span>不抓取网站</span>
-            <small>仅用表格与粘贴证据</small>
-          </label>
+      <!-- Tab: CSV -->
+      <div id="tabCsv" class="eval-tab-panel" style="display:none">
+        <div class="upload-zone">
+          <input type="file" accept=".csv" id="fileInputCsv" style="display:none" />
+          <div class="upload-prompt" id="uploadPromptCsv" onclick="document.getElementById('fileInputCsv').click()">
+            <div class="upload-icon-big">&#128195;</div>
+            <div class="upload-text">点击选择 .csv 文件</div>
+            <div class="upload-hint" id="hintCsv">自动检测 UTF-8 / GBK 编码，支持逗号/分号/制表符分隔</div>
+          </div>
         </div>
+      </div>
 
-        <div class="eval-params">
-          <label>每批行数 <input type="number" name="batch_size" min="1" placeholder="留空=一次跑完" /></label>
+      <!-- Tab: URL -->
+      <div id="tabUrl" class="eval-tab-panel" style="display:none">
+        <input type="url" id="urlInput" class="url-hero-input" placeholder="输入公司官网网址，如 https://example.com" />
+        <div class="url-extra-fields">
+          <input type="text" id="urlCompanyName" placeholder="公司名称（可选）" />
+          <input type="text" id="urlCountry" placeholder="国家/地区，如 US（可选）" />
+          <input type="text" id="urlProducts" placeholder="目标产品（可选）" />
+          <input type="text" id="urlNotes" placeholder="备注（可选）" />
         </div>
+      </div>
 
-        <button type="submit" class="btn-primary-full" id="submitBtn" onclick="startEval()">
-          <span id="btnText">&#9889; 开始评估</span>
-          <span id="btnSpinner" class="spinner" style="display:none"></span>
-        </button>
-      </form>
+      <!-- Shared options -->
+      <div class="eval-options">
+        <label class="option-row">
+          <input type="checkbox" id="cbDryRun" />
+          <span>试运行</span>
+          <small>仅校验，不调用 AI</small>
+        </label>
+        <label class="option-row">
+          <input type="checkbox" id="cbNoFetch" />
+          <span>不抓取网站</span>
+          <small>仅用已有数据</small>
+        </label>
+      </div>
+
+      <div class="eval-params" id="batchSizeGroup">
+        <label>每批行数（留空 = 一次跑完）</label>
+        <input type="number" id="inputBatchSize" min="1" placeholder="不限" style="max-width:120px" />
+      </div>
+
+      <button class="btn-submit" id="submitBtn" onclick="startEvalV2()">
+        &#9889; 开始评估
+      </button>
     </div>
 
-    <!-- Progress card -->
+    <!-- ====== PROGRESS CARD ====== -->
     <div class="eval-card" id="progressCard" style="display:none">
       <div class="card-header">
         <span class="card-icon">&#9889;</span>
@@ -69,31 +99,47 @@
           <p class="card-desc" id="progressPhase">等待中...</p>
         </div>
       </div>
-      <div class="progress-wrap" style="margin: 1rem 0;">
+      <div class="progress-wrap">
         <div class="progress-bar" id="progressBar" style="width:0%"></div>
       </div>
-      <div style="display:flex; justify-content:space-between; font-size:0.85rem; color:var(--pico-muted-color)">
+      <div class="progress-info">
         <span id="progressLabel">排队中...</span>
         <span id="progressPct">0%</span>
       </div>
-      <div id="resultArea" style="margin-top:1rem"></div>
+      <div class="progress-actions" id="progressActions" style="display:none">
+        <button class="btn-outline btn-sm" onclick="window.pauseJob()" id="btnPause">&#10074;&#10074; 暂停</button>
+        <button class="btn-outline btn-sm" style="color:var(--color-danger);border-color:rgba(239,71,111,0.3)" onclick="window.cancelJob()" id="btnCancel">&#10005; 取消</button>
+      </div>
+      <div id="resultArea"></div>
+    </div>
+
+    <!-- ====== INFO CARD ====== -->
+    <div class="eval-card">
+      <div class="card-header">
+        <span class="card-icon">&#128161;</span>
+        <div>
+          <h3>支持的数据格式</h3>
+          <p class="card-desc">系统会自动识别并映射列名</p>
+        </div>
+      </div>
+      <div class="eval-info" style="margin-top:0">
+        <div class="grid">
+          <div><strong>company_name</strong> 公司名称</div>
+          <div><strong>website</strong> 官网网址</div>
+          <div><strong>country_region</strong> 国家/地区</div>
+          <div><strong>target_products</strong> 目标产品</div>
+          <div><strong>contact_name</strong> 联系人姓名</div>
+          <div><strong>contact_email</strong> 联系人邮箱</div>
+          <div><strong>contact_phone</strong> 联系电话</div>
+          <div><strong>notes</strong> 备注</div>
+        </div>
+        <p style="margin-top:0.75rem; font-size:0.8rem; color:var(--text-muted)">
+          也支持中文列名：客户名称、公司、网址、网站、电话、联系人 等，系统会自动识别映射。
+        </p>
+      </div>
     </div>
   </div>
 
-  <!-- Info -->
-  <div class="eval-info">
-    <details>
-      <summary>输入列说明</summary>
-      <div class="grid" style="margin-top:0.5rem">
-        <div><strong>company_name</strong>（必填）— 公司名</div>
-        <div><strong>website</strong> — 官网 URL</div>
-        <div><strong>country_region</strong> — 国家/地区</div>
-        <div><strong>target_products</strong> — 目标产品线</div>
-        <div><strong>contact_name / contact_email</strong> — 联系人</div>
-        <div><strong>evidence_paste</strong> — 人工粘贴摘录</div>
-      </div>
-    </details>
-  </div>
 </div>
 {% endblock %}
 

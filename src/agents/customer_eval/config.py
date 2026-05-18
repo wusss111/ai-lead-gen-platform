@@ -12,7 +12,7 @@ from tools.pipeline.paths import REPO_ROOT
 @dataclass
 class CustomerEvalConfig:
     max_upload_mb: int = 32
-    max_rows: int = 500
+    max_rows: int = 100000
     queue_name: str = "customer_eval:default"
     data_dir: Path = REPO_ROOT / "var" / "platform"
     job_timeout: int = 2700

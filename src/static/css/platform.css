@@ -284,6 +284,38 @@ small { font-size: 0.8rem; color: var(--text-muted); }
   border-color: rgba(201, 169, 78, 0.3);
 }
 
+/* Nav job badge */
+.nav-job-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: var(--radius-full);
+  background: rgba(0, 180, 216, 0.12);
+  border: 1px solid rgba(0, 180, 216, 0.2);
+  text-decoration: none;
+  color: var(--ocean-200);
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  transition: all 0.15s ease;
+  cursor: pointer;
+}
+.nav-job-badge:hover {
+  background: rgba(0, 180, 216, 0.2);
+  border-color: var(--ocean-300);
+}
+.job-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--ocean-300);
+  animation: job-pulse 1.5s ease-in-out infinite;
+}
+@keyframes job-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
 /* ============================================================
    LAYOUT
    ============================================================ */

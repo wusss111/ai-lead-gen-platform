@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}销售管理 - 外贸客户平台{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="/static/crm/css/crm.css" />
+{% endblock %}
+
+{% block content %}
+<div class="crm-page">
+
+  <!-- Header -->
+  <div class="crm-header">
+    <div class="crm-header-left">
+      <h1 class="crm-title">销售管理</h1>
+      <span class="crm-subtitle">管理销售团队，分配客户跟进</span>
+    </div>
+    <div class="crm-header-right">
+      <a href="/crm/" class="btn-outline">&larr; 返回客户列表</a>
+      <button class="btn-accent" onclick="showAddModal()">+ 添加销售</button>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="table-card">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>姓名</th>
+          <th>邮箱</th>
+          <th>电话</th>
+          <th style="text-align:center">客户数</th>
+          <th style="text-align:center">状态</th>
+          <th>操作</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody">
+        <tr><td colspan="6" class="empty-cell"><p>加载中...</p></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<!-- Add/Edit Modal -->
+<div id="spModal" class="modal-overlay" style="display:none">
+  <div class="modal-panel">
+    <div class="modal-header">
+      <h3 id="modalTitle">添加销售</h3>
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+    </div>
+    <form id="spForm" onsubmit="return false;">
+      <input type="hidden" id="spId" />
+      <label style="display:block; margin-bottom:0.8rem; font-size:0.85rem; color:var(--text-secondary)">
+        姓名 <span style="color:var(--color-danger)">*</span>
+        <input type="text" id="spName" required style="width:100%; margin-top:0.25rem; padding:0.55rem 0.7rem; border-radius:var(--radius-sm);
+          border:var(--border-input); background:var(--bg-input); color:var(--text-primary); font-family:var(--font-body); font-size:0.9rem" />
+      </label>
+      <label style="display:block; margin-bottom:0.8rem; font-size:0.85rem; color:var(--text-secondary)">
+        邮箱
+        <input type="email" id="spEmail" style="width:100%; margin-top:0.25rem; padding:0.55rem 0.7rem; border-radius:var(--radius-sm);
+          border:var(--border-input); background:var(--bg-input); color:var(--text-primary); font-family:var(--font-body); font-size:0.9rem" />
+      </label>
+      <label style="display:block; margin-bottom:1rem; font-size:0.85rem; color:var(--text-secondary)">
+        电话
+        <input type="text" id="spPhone" style="width:100%; margin-top:0.25rem; padding:0.55rem 0.7rem; border-radius:var(--radius-sm);
+          border:var(--border-input); background:var(--bg-input); color:var(--text-primary); font-family:var(--font-body); font-size:0.9rem" />
+      </label>
+      <div style="display:flex; gap:0.5rem; justify-content:flex-end">
+        <button type="button" class="btn-outline btn-sm" onclick="closeModal()">取消</button>
+        <button type="submit" class="btn-accent btn-sm" onclick="saveSalesperson()">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="/static/crm/js/crm_salespersons.js"></script>
+{% endblock %}

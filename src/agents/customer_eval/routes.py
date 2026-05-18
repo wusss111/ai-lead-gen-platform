@@ -19,7 +19,7 @@ from src.core.auth import require_auth
 from src.core.config import PlatformConfig, get_config
 from src.core.redis_utils import get_queue, get_rq_job_info
 from src.agents.customer_eval.config import CustomerEvalConfig
-from src.agents.customer_eval.tasks import run_eval_job
+from src.agents.customer_eval.tasks import run_eval_job, run_url_eval_job
 from src.core.database import get_db, dicts_from_rows
 
 logger = logging.getLogger(__name__)
@@ -70,13 +70,22 @@ async def create_job(
 ) -> JSONResponse:
     eval_cfg = CustomerEvalConfig.from_env()
 
-    if not file.filename or not file.filename.lower().endswith(".xlsx"):
-        raise HTTPException(400, "Please upload a .xlsx file")
+    if not file.filename:
+        raise HTTPException(400, "请上传文件")
+
+    fname = file.filename.lower()
+    is_csv = fname.endswith(".csv")
+    is_xlsx = fname.endswith(".xlsx")
+
+    if not is_csv and not is_xlsx:
+        raise HTTPException(400, "请上传 .xlsx 或 .csv 文件")
 
     job_id = str(uuid.uuid4())
     job_dir = config.data_dir / "jobs" / job_id
     job_dir.mkdir(parents=True, exist_ok=True)
-    dest = job_dir / "input.xlsx"
+
+    ext = ".csv" if is_csv else ".xlsx"
+    dest = job_dir / f"input{ext}"
 
     size_limit = eval_cfg.max_upload_mb * 1024 * 1024
     written = 0
@@ -86,24 +95,34 @@ async def create_job(
                 written += len(chunk)
                 if written > size_limit:
                     shutil.rmtree(job_dir, ignore_errors=True)
-                    raise HTTPException(413, f"File exceeds limit ({eval_cfg.max_upload_mb} MB)")
+                    raise HTTPException(413, f"文件超过大小限制 ({eval_cfg.max_upload_mb} MB)")
                 f.write(chunk)
     except HTTPException:
         raise
     except Exception as e:
         shutil.rmtree(job_dir, ignore_errors=True)
-        raise HTTPException(500, f"Failed to save upload: {e}") from e
+        raise HTTPException(500, f"文件保存失败: {e}") from e
 
+    # 读取验证
     try:
-        df_probe = pd.read_excel(dest, engine="openpyxl")
+        if is_csv:
+            from tools.pipeline.io_excel import _detect_csv_encoding, _detect_csv_separator
+            encoding = _detect_csv_encoding(dest)
+            sep = _detect_csv_separator(dest, encoding)
+            try:
+                df_probe = pd.read_csv(dest, encoding=encoding, sep=sep, dtype=str)
+            except Exception:
+                df_probe = pd.read_csv(dest, encoding=encoding, sep=None, engine="python", dtype=str)
+        else:
+            df_probe = pd.read_excel(dest, engine="openpyxl")
         if len(df_probe) > eval_cfg.max_rows:
             shutil.rmtree(job_dir, ignore_errors=True)
-            raise HTTPException(413, f"Row count exceeds limit ({eval_cfg.max_rows})")
+            raise HTTPException(413, f"行数超过限制 ({eval_cfg.max_rows})")
     except HTTPException:
         raise
     except Exception as e:
         shutil.rmtree(job_dir, ignore_errors=True)
-        raise HTTPException(400, f"Cannot read Excel: {e}") from e
+        raise HTTPException(400, f"无法读取文件: {e}") from e
 
     lim = _parse_int(limit)
     bs = _parse_int(batch_size)
@@ -119,6 +138,7 @@ async def create_job(
         batch_size=bs,
         start_row=0,
         append_output=False,
+        input_ext=ext,
         job_id=job_id,
         job_timeout=eval_cfg.job_timeout,
         failure_ttl=eval_cfg.result_ttl,
@@ -134,8 +154,8 @@ async def create_job(
     )
     db.commit()
 
-    logger.info("Job enqueued job_id=%s rq_id=%s dry_run=%s", job_id, rq_job.id, dry_run)
-    return JSONResponse({"job_id": job_id, "rq_job_id": rq_job.id, "status": "queued"})
+    logger.info("Job enqueued job_id=%s rq_id=%s dry_run=%s format=%s", job_id, rq_job.id, dry_run, ext)
+    return JSONResponse({"job_id": job_id, "rq_job_id": rq_job.id, "status": "queued", "format": ext})
 
 
 @router.post("/api/jobs/{job_id}/continue")
@@ -208,6 +228,34 @@ def get_job_status(
     return body
 
 
+@router.post("/api/jobs/{job_id}/cancel")
+def cancel_job(
+    job_id: str,
+    _: Annotated[None, Depends(require_auth)],
+    config: Annotated[PlatformConfig, Depends(get_config)],
+) -> JSONResponse:
+    """Cancel a running evaluation job. Saves partial results before stopping."""
+    from redis import Redis as _Redis
+    conn = _Redis.from_url(config.redis_url)
+    conn.setex(f"job_control:{job_id}", 600, "cancel")
+    logger.info("Cancel signal sent for job %s", job_id)
+    return JSONResponse({"status": "ok", "message": "取消信号已发送，正在保存已处理数据..."})
+
+
+@router.post("/api/jobs/{job_id}/pause")
+def pause_job(
+    job_id: str,
+    _: Annotated[None, Depends(require_auth)],
+    config: Annotated[PlatformConfig, Depends(get_config)],
+) -> JSONResponse:
+    """Pause a running evaluation job. Saves progress for later resume."""
+    from redis import Redis as _Redis
+    conn = _Redis.from_url(config.redis_url)
+    conn.setex(f"job_control:{job_id}", 600, "pause")
+    logger.info("Pause signal sent for job %s", job_id)
+    return JSONResponse({"status": "ok", "message": "暂停信号已发送，正在保存进度..."})
+
+
 @router.get("/api/jobs/{job_id}/download")
 def download_result(
     job_id: str,
@@ -233,6 +281,61 @@ def download_result(
         filename=f"customer_eval_{job_id}.xlsx",
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
+
+
+@router.post("/api/url-eval")
+def url_eval(
+    _: Annotated[None, Depends(require_auth)],
+    config: Annotated[PlatformConfig, Depends(get_config)],
+    url: str = Form(...),
+    company_name: str = Form(""),
+    country: str = Form(""),
+    target_products: str = Form(""),
+    notes: str = Form(""),
+    dry_run: bool = Form(False),
+    no_fetch: bool = Form(False),
+) -> JSONResponse:
+    """手动输入网站 URL 进行快速评估。"""
+    eval_cfg = CustomerEvalConfig.from_env()
+
+    url = url.strip()
+    if not url:
+        raise HTTPException(400, "请输入网站 URL")
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    job_id = str(uuid.uuid4())
+    job_dir = config.data_dir / "jobs" / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    queue = get_queue(config.redis_url, eval_cfg.queue_name)
+    rq_job = queue.enqueue(
+        run_url_eval_job,
+        job_id,
+        str(config.data_dir),
+        url=url,
+        company_name=company_name.strip(),
+        country=country.strip() if country.strip() else "US",
+        target_products=target_products.strip(),
+        notes=notes.strip(),
+        dry_run=dry_run,
+        no_fetch=no_fetch,
+        job_id=job_id,
+        job_timeout=eval_cfg.job_timeout,
+        failure_ttl=eval_cfg.result_ttl,
+        result_ttl=eval_cfg.result_ttl,
+    )
+    (job_dir / "rq_job_id.txt").write_text(rq_job.id, encoding="utf-8")
+
+    db = get_db()
+    db.execute(
+        "INSERT OR REPLACE INTO evaluation_batch (id, original_filename, total_rows, status) VALUES (?,?,?,?)",
+        (job_id, f"URL: {url}", 1, "queued"),
+    )
+    db.commit()
+
+    logger.info("URL eval enqueued job_id=%s rq_id=%s url=%s", job_id, rq_job.id, url)
+    return JSONResponse({"job_id": job_id, "rq_job_id": rq_job.id, "status": "queued"})
 
 
 def _parse_int(val: str | None) -> int | None:

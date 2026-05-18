@@ -77,7 +77,38 @@ CREATE TABLE IF NOT EXISTS daily_send_log (
     sent_at TEXT DEFAULT (datetime('now','localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_daily_send_log_date ON daily_send_log(sent_date);
+
+CREATE TABLE IF NOT EXISTS salesperson (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    email TEXT DEFAULT '',
+    phone TEXT DEFAULT '',
+    is_active INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_salesperson_active ON salesperson(is_active);
+
+CREATE TABLE IF NOT EXISTS email_tracking (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    tracking_id TEXT NOT NULL UNIQUE,
+    customer_id INTEGER REFERENCES customer(id),
+    send_log_id INTEGER,
+    opened_at TEXT DEFAULT (datetime('now','localtime')),
+    ip_address TEXT DEFAULT '',
+    user_agent TEXT DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_tracking_tracking_id ON email_tracking(tracking_id);
+CREATE INDEX IF NOT EXISTS idx_tracking_customer ON email_tracking(customer_id);
 """
+
+
+def _ensure_column(db: sqlite3.Connection, table: str, column: str, col_def: str) -> None:
+    """Add a column if it does not already exist (SQLite-safe)."""
+    try:
+        db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_def}")
+    except sqlite3.OperationalError as e:
+        if "duplicate column" not in str(e).lower():
+            raise
 
 
 def get_db() -> sqlite3.Connection:
@@ -93,6 +124,15 @@ def get_db() -> sqlite3.Connection:
         conn.execute("PRAGMA foreign_keys=ON")
         conn.execute("PRAGMA busy_timeout=5000")
         conn.executescript(SCHEMA_SQL)
+
+        # Safe column migrations for existing databases
+        _ensure_column(conn, "customer", "assigned_salesperson_id", "INTEGER REFERENCES salesperson(id)")
+        _ensure_column(conn, "customer", "tracking_last_opened_at", "TEXT")
+        _ensure_column(conn, "daily_send_log", "salesperson_id", "INTEGER")
+        _ensure_column(conn, "daily_send_log", "tracking_id", "TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_customer_salesperson ON customer(assigned_salesperson_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_send_log_tracking ON daily_send_log(tracking_id)")
+
         conn.commit()
         _local.connection = conn
     return conn

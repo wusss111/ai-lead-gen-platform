@@ -109,6 +109,24 @@ def generate_emails(
     })
 
 
+@router.get("/api/emails/saved")
+def get_saved_emails(
+    _: Annotated[None, Depends(require_auth)],
+) -> JSONResponse:
+    """Return customers who already have generated/sent/failed emails."""
+    db = get_db()
+    rows = db.execute(
+        "SELECT id, company_name, contact_name, contact_email, country_region, "
+        "overall_score_computed, deal_recommendation, "
+        "email_status, email_subject, email_body, "
+        "email_sent_at, tracking_last_opened_at, assigned_salesperson_id "
+        "FROM customer "
+        "WHERE email_status IN ('generated','sent','failed') "
+        "ORDER BY email_status, overall_score_computed DESC"
+    ).fetchall()
+    return JSONResponse(dicts_from_rows(rows))
+
+
 @router.get("/api/emails/{job_id}")
 def get_emails(
     job_id: str,
@@ -253,6 +271,31 @@ def get_send_status(
         "progress": info.get("progress"),
         "result": result,
     })
+
+
+@router.put("/api/emails/{customer_id}")
+def update_email(
+    customer_id: int,
+    _: Annotated[None, Depends(require_auth)],
+    subject: str = Form(""),
+    body: str = Form(""),
+) -> JSONResponse:
+    """Update email subject/body for a customer (only if not yet sent)."""
+    db = get_db()
+    row = db.execute(
+        "SELECT email_status FROM customer WHERE id=?", (customer_id,)
+    ).fetchone()
+    if not row:
+        raise HTTPException(404, "客户不存在")
+    if row["email_status"] == "sent":
+        raise HTTPException(400, "已发送的邮件不可修改")
+
+    db.execute(
+        "UPDATE customer SET email_subject=?, email_body=?, updated_at=datetime('now','localtime') WHERE id=?",
+        (subject.strip(), body.strip(), customer_id),
+    )
+    db.commit()
+    return JSONResponse({"status": "ok"})
 
 
 @router.get("/api/smtp-check")

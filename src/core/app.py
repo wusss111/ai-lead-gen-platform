@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader
 
@@ -91,6 +91,45 @@ def create_app() -> FastAPI:
             "active_agent": None,
             "agents": agents,
         }))
+
+    # ---- Email tracking pixel endpoint (public, no auth) ----
+    @app.get("/track/open/{tracking_uuid}")
+    def track_open(tracking_uuid: str, request: Request):
+        """Tracking pixel endpoint. Records email open events.
+        Returns a 1x1 transparent GIF regardless of success/failure."""
+        import base64
+        from src.core.database import get_db as _get_track_db
+
+        db = _get_track_db()
+        log_row = db.execute(
+            "SELECT id, customer_id FROM daily_send_log WHERE tracking_id=?",
+            (tracking_uuid,)
+        ).fetchone()
+
+        if log_row:
+            db.execute(
+                "INSERT INTO email_tracking (tracking_id, customer_id, send_log_id, ip_address, user_agent) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    tracking_uuid,
+                    log_row["customer_id"],
+                    log_row["id"],
+                    request.client.host if request.client else "",
+                    request.headers.get("User-Agent", "")[:500],
+                ),
+            )
+            db.execute(
+                "UPDATE customer SET tracking_last_opened_at=datetime('now','localtime') WHERE id=?",
+                (log_row["customer_id"],),
+            )
+            db.commit()
+
+        # 1x1 transparent GIF (43 bytes, universally compatible)
+        pixel = base64.b64decode(
+            "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+        )
+        return Response(content=pixel, media_type="image/gif",
+                        headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
     # Store on app.state
     app.state.nav_agents = nav_agents

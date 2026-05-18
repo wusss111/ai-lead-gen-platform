@@ -10,3 +10,10 @@ var/
 *.tmp
 .DS_Store
 Thumbs.db
+
+# SSL 证书（勿提交）
+deploy/ssl/*
+!deploy/ssl/.gitkeep
+
+# Claude Code 本地配置
+.claude/

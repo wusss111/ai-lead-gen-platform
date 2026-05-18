@@ -211,6 +211,14 @@ def send_emails_job(
         if "contact_email" in e and isinstance(e["contact_email"], str):
             e["contact_email"] = e["contact_email"].strip()
 
+    # 注入追踪像素
+    from src.core.tracking_pixel import generate_tracking_id, inject_tracking_pixel
+    for e in to_send:
+        tid = generate_tracking_id()
+        e["tracking_id"] = tid
+        if e.get("body_html"):
+            e["body_html"] = inject_tracking_pixel(e["body_html"], tid)
+
     # Auto-detect: use Gmail API only if OAuth token exists (fully set up)
     _repo_root = Path(__file__).resolve().parent.parent.parent.parent
     _gmail_token = _repo_root / "var" / "gmail_token.json"
@@ -249,8 +257,10 @@ def send_emails_job(
                 (cid,),
             )
             db.execute(
-                "INSERT INTO daily_send_log (sent_date, recipient_email, customer_id, status) VALUES (date('now','localtime'), ?, ?, 'sent')",
-                (r.get("contact_email", ""), cid),
+                "INSERT INTO daily_send_log (sent_date, recipient_email, customer_id, status, tracking_id, salesperson_id) "
+                "VALUES (date('now','localtime'), ?, ?, 'sent', ?, "
+                "(SELECT assigned_salesperson_id FROM customer WHERE id=?))",
+                (r.get("contact_email", ""), cid, r.get("tracking_id", ""), cid),
             )
         elif cid and not r.get("send_success"):
             db.execute(
@@ -258,8 +268,10 @@ def send_emails_job(
                 (cid,),
             )
             db.execute(
-                "INSERT INTO daily_send_log (sent_date, recipient_email, customer_id, status) VALUES (date('now','localtime'), ?, ?, 'failed')",
-                (r.get("contact_email", ""), cid),
+                "INSERT INTO daily_send_log (sent_date, recipient_email, customer_id, status, tracking_id, salesperson_id) "
+                "VALUES (date('now','localtime'), ?, ?, 'failed', ?, "
+                "(SELECT assigned_salesperson_id FROM customer WHERE id=?))",
+                (r.get("contact_email", ""), cid, r.get("tracking_id", ""), cid),
             )
     db.commit()
 

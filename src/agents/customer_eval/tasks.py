@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -19,6 +20,22 @@ logger = logging.getLogger(__name__)
 _PROGRESS_ROW_MIN_INTERVAL_S = 1.2
 
 
+def _df_from_partial(input_path: Path, output_path: Path, start_row: int, end_row: int):
+    """Read the partially-processed DataFrame slice from output Excel or input."""
+    if output_path.is_file():
+        try:
+            return pd.read_excel(output_path, engine="openpyxl")
+        except Exception:
+            pass
+    if input_path.suffix.lower() == ".csv":
+        from tools.pipeline.io_excel import read_input_csv
+        df, _ = read_input_csv(input_path)
+    else:
+        from tools.pipeline.io_excel import read_input_xlsx
+        df, _ = read_input_xlsx(input_path)
+    return df.iloc[start_row:end_row]
+
+
 def run_eval_job(
     folder_job_id: str,
     data_root: str,
@@ -29,11 +46,16 @@ def run_eval_job(
     start_row: int = 0,
     batch_size: int | None = None,
     append_output: bool = False,
+    input_ext: str = ".xlsx",
 ) -> dict[str, Any]:
-    """Run eval pipeline, write output.xlsx, and save results to SQLite."""
+    """Run eval pipeline, write output.xlsx, and save results to SQLite.
+    Supports .xlsx and .csv inputs (detected via input_ext param).
+    """
     root = Path(data_root)
     job_dir = root / "jobs" / folder_job_id
-    inp = job_dir / "input.xlsx"
+    inp_xlsx = job_dir / "input.xlsx"
+    inp_csv = job_dir / "input.csv"
+    inp = inp_csv if inp_csv.is_file() else inp_xlsx
     out = job_dir / "output.xlsx"
     if not inp.is_file():
         raise FileNotFoundError(f"Input file not found: {inp}")
@@ -50,7 +72,7 @@ def run_eval_job(
 
     from rq import get_current_job
 
-    from tools.pipeline.runner import run_pipeline
+    from tools.pipeline.runner import run_pipeline, _ControlExit
 
     last_row_save = {"t": 0.0}
 
@@ -70,6 +92,21 @@ def run_eval_job(
         except Exception:
             logger.debug("job.save_meta skipped", exc_info=True)
 
+    # Redis-based control signal checker
+    from redis import Redis as _Redis
+    _redis_url_val = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
+    _ctrl_conn = _Redis.from_url(_redis_url_val)
+
+    def check_control() -> str | None:
+        """Called before each row. Returns 'cancel', 'pause', or None."""
+        try:
+            val = _ctrl_conn.get(f"job_control:{folder_job_id}")
+            if val:
+                return val.decode("utf-8") if isinstance(val, bytes) else val
+        except Exception:
+            pass
+        return None
+
     batch_info: dict[str, Any] = {}
     logger.info(
         "RQ folder=%s start: input=%s start_row=%s limit=%s append=%s",
@@ -83,11 +120,30 @@ def run_eval_job(
             limit=eff_limit, start_row=start_row,
             append_output=append_output,
             progress_callback=rq_progress,
+            control_callback=check_control,
             batch_info_out=batch_info,
         )
+    except _ControlExit as e:
+        logger.warning("RQ job %s %s at row %d, saving partial results", folder_job_id, e.reason, e.row)
+        n = max(0, e.row - start_row)
+        if n > 0:
+            _save_to_database(folder_job_id, inp.name, _df_from_partial(inp, out, start_row, e.row))
+        if e.reason == "cancel":
+            _update_batch_status(folder_job_id, "cancelled")
+            # Clean up progress file
+            prog_path = job_dir / "progress.json"
+            if prog_path.is_file():
+                prog_path.unlink()
+        else:
+            _update_batch_status(folder_job_id, "paused")
+        # Clear control signal
+        _ctrl_conn.delete(f"job_control:{folder_job_id}")
+        return {"rows": n, "output_path": str(out), "control": e.reason,
+                "batch_start_row": start_row, "batch_end_exclusive": e.row}
     except Exception:
         logger.exception("RQ job %s pipeline error", folder_job_id)
         _update_batch_status(folder_job_id, "failed")
+        _ctrl_conn.delete(f"job_control:{folder_job_id}")
         raise
 
     n = len(df)
@@ -119,6 +175,69 @@ def run_eval_job(
         "has_more": bool(batch_info.get("has_more", False)),
         "total_rows": batch_info.get("total_rows", n),
     }
+
+
+def run_url_eval_job(
+    folder_job_id: str,
+    data_root: str,
+    *,
+    url: str,
+    company_name: str = "",
+    country: str = "US",
+    target_products: str = "",
+    notes: str = "",
+    dry_run: bool = False,
+    no_fetch: bool = False,
+) -> dict[str, Any]:
+    """URL 快速评估：构造单行 DataFrame → 走标准 pipeline → 入库。"""
+    import pandas as pd
+
+    root = Path(data_root)
+    job_dir = root / "jobs" / folder_job_id
+    out = job_dir / "output.xlsx"
+
+    # 构造单行输入
+    row = {
+        "company_name": company_name,
+        "website": url,
+        "country_region": country,
+        "target_products": target_products,
+        "notes": notes,
+        "contact_name": "", "contact_email": "", "contact_phone": "",
+        "contact_address": "", "evidence_paste": "", "priority": "",
+    }
+    df_input = pd.DataFrame([row])
+
+    # 保存为 csv 供 pipeline 读取
+    inp = job_dir / "input.csv"
+    df_input.to_csv(inp, index=False)
+
+    logger.info("URL eval: url=%s company=%s", url, company_name)
+
+    from rq import get_current_job
+    from tools.pipeline.runner import run_pipeline
+
+    batch_info: dict[str, Any] = {}
+
+    try:
+        df = run_pipeline(
+            inp, out,
+            dry_run=dry_run, no_fetch=no_fetch,
+            limit=1, start_row=0, append_output=False,
+            progress_callback=(lambda _: None),
+            batch_info_out=batch_info,
+        )
+    except Exception:
+        logger.exception("URL eval job %s pipeline error", folder_job_id)
+        _update_batch_status(folder_job_id, "failed")
+        raise
+
+    n = len(df)
+    _save_to_database(folder_job_id, f"URL: {url}", df)
+    _update_batch_status(folder_job_id, "finished")
+
+    logger.info("URL eval done: rows=%s url=%s", n, url)
+    return {"rows": n, "output_path": str(out), "url": url}
 
 
 def _update_batch_status(batch_id: str, status: str) -> None:
@@ -172,7 +291,11 @@ def _save_to_database(batch_id: str, filename: str, df) -> None:
     }
 
     # Transaction: atomic delete + insert for this batch
-    db.execute("BEGIN")
+    # Use SAVEPOINT to avoid "cannot start a transaction within a transaction"
+    try:
+        db.execute("SAVEPOINT _save_batch")
+    except Exception:
+        pass
     db.execute("DELETE FROM customer WHERE batch_id=?", (batch_id,))
 
     # Build fixed column order for executemany batch INSERT
@@ -187,8 +310,20 @@ def _save_to_database(batch_id: str, filename: str, df) -> None:
         for df_col, db_col in col_map.items():
             if df_col in df.columns:
                 val = row[df_col]
+                # Guard against pandas Series (duplicate column names)
+                if hasattr(val, "iloc") and hasattr(val, "shape"):
+                    try:
+                        if len(val) > 0:
+                            val = val.iloc[0]
+                        else:
+                            val = None
+                    except Exception:
+                        val = None
                 if hasattr(val, "item"):
-                    val = val.item()
+                    try:
+                        val = val.item()
+                    except ValueError:
+                        val = None
                 if pd_isna(val):
                     val = None
                 elif isinstance(val, str):
@@ -202,5 +337,9 @@ def _save_to_database(batch_id: str, filename: str, df) -> None:
         values_list.append(tuple(row_values))
 
     db.executemany(sql, values_list)
+    try:
+        db.execute("RELEASE _save_batch")
+    except Exception:
+        pass
     db.commit()
     logger.info("Saved %d customers to database for batch %s", len(df), batch_id)

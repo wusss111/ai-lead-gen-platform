@@ -7,66 +7,210 @@
 
 {% block content %}
 <div class="crm-page">
-  <div class="crm-hero">
-    <h1>客户资源</h1>
-    <p>浏览和管理已评估的潜客数据</p>
+
+  <!-- ===== Header ===== -->
+  <div class="crm-header">
+    <div class="crm-header-left">
+      <h1 class="crm-title">客户资源</h1>
+      <span class="crm-subtitle">{{ nav_agents | selectattr('name','equalto','crm') | map(attribute='display_name') | first or 'CRM' }} · 潜客管理与分配</span>
+    </div>
+    <div class="crm-header-right">
+      <button class="btn-accent" onclick="showSmartSearch()" title="AI 智能搜索">&#128269; 智能搜索</button>
+      <a href="/crm/salespersons" class="btn-outline">&#128101; 销售管理</a>
+    </div>
   </div>
 
-  <!-- Filter Bar -->
-  <div class="filter-bar">
-    <input type="search" id="searchInput" placeholder="搜索公司名、联系人、邮箱..."
-           oninput="debounceSearch()" />
-    <select id="filterRec" onchange="loadCustomers()">
-      <option value="">全部推荐</option>
-      <option value="high_intent">高意向</option>
-      <option value="watch">观察</option>
-      <option value="no">不建议</option>
-    </select>
-    <select id="filterReview" onchange="loadCustomers()">
-      <option value="">全部复核状态</option>
-      <option value="YES">需复核</option>
-      <option value="">正常</option>
-    </select>
-    <select id="sortBy" onchange="loadCustomers()">
-      <option value="-created_at">最近添加</option>
-      <option value="-overall_score_computed">综合分降序</option>
-      <option value="overall_score_computed">综合分升序</option>
-      <option value="company_name">公司名 A-Z</option>
-    </select>
-    <button class="btn-export" onclick="exportData()" title="导出 JSON">&#128229; 导出</button>
+  <!-- ===== Stats Row ===== -->
+  <div class="stats-row" id="statsRow">
+    <div class="stat-item">
+      <span class="stat-value" id="statTotal">-</span>
+      <span class="stat-label">客户总数</span>
+    </div>
+    <div class="stat-item stat-highlight-green">
+      <span class="stat-value" id="statHighIntent">-</span>
+      <span class="stat-label">高意向</span>
+    </div>
+    <div class="stat-item stat-highlight-yellow">
+      <span class="stat-value" id="statReview">-</span>
+      <span class="stat-label">需复核</span>
+    </div>
+    <div class="stat-item stat-highlight-muted">
+      <span class="stat-value" id="statUnassigned">-</span>
+      <span class="stat-label">未分配</span>
+    </div>
   </div>
 
-  <!-- Stats row -->
-  <div class="stats-row" id="statsRow" style="display:none">
-    <span>共 <strong id="statTotal">0</strong> 条记录</span>
-    <span id="statHigh" style="display:none"><span class="badge badge-green">高意向</span> <strong id="cntHigh">0</strong></span>
-    <span id="statWatch" style="display:none"><span class="badge badge-yellow">观察</span> <strong id="cntWatch">0</strong></span>
-    <span id="statReview" style="display:none"><span class="badge badge-red">需复核</span> <strong id="cntReview">0</strong></span>
+  <!-- ===== Filter Bar ===== -->
+  <div class="filter-card">
+    <div class="filter-row">
+      <div class="search-wrap">
+        <span class="search-icon">&#128269;</span>
+        <input type="search" id="searchInput" class="search-input" placeholder="搜索公司、联系人、邮箱或网站..." oninput="debounceSearch()" />
+      </div>
+      <select id="filterRec" class="filter-select" onchange="reloadCustomers()">
+        <option value="">全部推荐</option>
+        <option value="high_intent">&#128994; 高意向</option>
+        <option value="watch">&#128993; 观察</option>
+        <option value="no">&#128308; 不建议</option>
+      </select>
+      <select id="filterReview" class="filter-select" onchange="reloadCustomers()">
+        <option value="">全部状态</option>
+        <option value="YES">需复核</option>
+      </select>
+      <select id="filterSalesperson" class="filter-select" onchange="reloadCustomers()">
+        <option value="">全部销售</option>
+      </select>
+      <select id="sortBy" class="filter-select" onchange="reloadCustomers()">
+        <option value="-created_at">最近添加</option>
+        <option value="-overall_score_computed">综合分 ↓</option>
+        <option value="overall_score_computed">综合分 ↑</option>
+        <option value="company_name">公司名 A-Z</option>
+      </select>
+      <button class="btn-outline btn-sm" onclick="exportData()" title="导出 JSON">&#128229;</button>
+      <button class="btn-outline btn-sm advanced-toggle" onclick="toggleAdvanced()" title="高级筛选">
+        &#9881; 筛选 <span class="filter-badge" id="filterBadge" style="display:none">0</span>
+      </button>
+    </div>
+    <!-- Advanced Filter Panel -->
+    <div class="advanced-panel" id="advancedPanel" style="display:none">
+      <div class="advanced-row">
+        <div class="advanced-field">
+          <label>国家</label>
+          <input type="text" id="afCountry" class="af-input" placeholder="如 US, DE, FR..." oninput="onAdvancedChange()" />
+        </div>
+        <div class="advanced-field">
+          <label>最低评分</label>
+          <input type="number" id="afMinScore" class="af-input af-num" placeholder="0-100" min="0" max="100" step="0.5" oninput="onAdvancedChange()" />
+        </div>
+        <div class="advanced-field">
+          <label>邮件状态</label>
+          <select id="afEmailStatus" class="af-select" onchange="reloadCustomers()">
+            <option value="">全部</option>
+            <option value="generated">已生成</option>
+            <option value="sent">已发送</option>
+            <option value="failed">发送失败</option>
+          </select>
+        </div>
+        <div class="advanced-field">
+          <label>买方角色</label>
+          <select id="afBuyerSeller" class="af-select" onchange="reloadCustomers()">
+            <option value="">全部</option>
+            <option value="buyer">买方</option>
+            <option value="seller">卖方</option>
+            <option value="both">兼营</option>
+            <option value="unclear">不明</option>
+          </select>
+        </div>
+      </div>
+      <div class="advanced-row">
+        <div class="advanced-field">
+          <label>优先级</label>
+          <select id="afPriority" class="af-select" onchange="reloadCustomers()">
+            <option value="">全部</option>
+            <option value="high">高</option>
+            <option value="medium">中</option>
+            <option value="low">低</option>
+          </select>
+        </div>
+        <div class="advanced-field">
+          <label>邮箱为空</label>
+          <select id="afEmailEmpty" class="af-select" onchange="reloadCustomers()">
+            <option value="">全部</option>
+            <option value="1">无邮箱</option>
+          </select>
+        </div>
+        <div class="advanced-field">
+          <label>数据质量</label>
+          <select id="afDataQuality" class="af-select" onchange="reloadCustomers()">
+            <option value="">全部</option>
+            <option value="high">高</option>
+            <option value="medium">中</option>
+            <option value="low">低</option>
+          </select>
+        </div>
+        <div class="advanced-field">
+          <label>创建时间 从</label>
+          <input type="date" id="afCreatedFrom" class="af-input" onchange="reloadCustomers()" />
+        </div>
+        <div class="advanced-field">
+          <label>至</label>
+          <input type="date" id="afCreatedTo" class="af-input" onchange="reloadCustomers()" />
+        </div>
+      </div>
+      <div class="advanced-actions">
+        <button class="btn-link" onclick="clearAdvanced()">清除所有筛选</button>
+      </div>
+    </div>
   </div>
 
-  <!-- Table -->
-  <div class="table-wrap">
-    <table class="data-table" id="customerTable">
+  <!-- ===== Batch Action Bar ===== -->
+  <div class="batch-card" id="batchBar">
+    <div class="batch-left">
+      <label class="batch-check">
+        <input type="checkbox" id="checkAll" onchange="toggleAll(this.checked)" />
+        <span class="batch-count"><strong id="batchCount">0</strong> 位已选</span>
+      </label>
+      <button class="btn-link" onclick="selectAll()">全选本页</button>
+      <button class="btn-link" onclick="deselectAll()">清空选择</button>
+    </div>
+    <div class="batch-right">
+      <span class="batch-label">批量分配至</span>
+      <select id="batchSalesperson" class="batch-select" onchange="batchAssign(this.value)">
+        <option value="">-- 选择销售 --</option>
+      </select>
+      <span id="batchStatus" class="batch-status"></span>
+      <span id="batchHint" class="batch-hint">&#9756; 勾选客户行前的复选框开始</span>
+      <button class="btn-link" style="color:var(--color-danger);margin-left:auto" onclick="batchDelete()" id="btnBatchDelete">&#128465; 删除选中</button>
+    </div>
+  </div>
+
+  <!-- ===== Data Table ===== -->
+  <div class="table-card">
+    <table class="data-table">
       <thead>
         <tr>
-          <th>公司名称</th>
-          <th>国家</th>
-          <th>联系人</th>
-          <th>邮箱</th>
-          <th>综合分</th>
-          <th>推荐</th>
-          <th>复核</th>
-          <th>邮件</th>
+          <th class="col-cb"><input type="checkbox" id="checkAll2" onchange="toggleAll(this.checked)" /></th>
+          <th class="col-company">公司名称</th>
+          <th class="col-country">国家</th>
+          <th class="col-contact">联系人</th>
+          <th class="col-email">邮箱</th>
+          <th class="col-score">综合分</th>
+          <th class="col-rec">推荐</th>
+          <th class="col-review">复核</th>
+          <th class="col-role">买方角色</th>
+          <th class="col-sp">负责销售</th>
+          <th class="col-mail">邮件</th>
+          <th class="col-read">已读</th>
+          <th class="col-time">存入时间</th>
         </tr>
       </thead>
       <tbody id="tableBody">
-        <tr><td colspan="8" class="empty-state"><div class="empty-icon">&#128269;</div><p>暂无数据，请先完成客户评估</p></td></tr>
+        <tr><td colspan="13" class="empty-cell"><div class="empty-icon">&#128269;</div><p>加载中...</p></td></tr>
       </tbody>
     </table>
   </div>
 
-  <!-- Pagination -->
-  <div class="pagination" id="pagination" style="display:none"></div>
+  <!-- ===== Pagination ===== -->
+  <div class="pagination-wrap" id="pagination"></div>
+
+  <!-- ===== Smart Search Modal ===== -->
+  <div id="smartSearchModal" class="modal-overlay" style="display:none" onclick="if(event.target===this)closeSmartSearch()">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h3>&#129504; AI 智能搜索</h3>
+        <button class="modal-close" onclick="closeSmartSearch()">&times;</button>
+      </div>
+      <p class="modal-desc">用自然语言描述你想查找的客户，AI 会自动转换为数据库查询</p>
+      <div class="modal-body">
+        <textarea id="smartQuery" class="smart-textarea" rows="2" placeholder="例如：德国评分大于70的高意向客户、最近一周添加的美国客户、邮箱包含gmail的未分配客户..."></textarea>
+      </div>
+      <div class="modal-footer">
+        <span id="smartExplanation" class="smart-explain"></span>
+        <button class="btn-accent" id="smartSearchBtn" onclick="doSmartSearch()">搜索</button>
+      </div>
+    </div>
+  </div>
+
 </div>
 {% endblock %}
 

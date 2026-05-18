@@ -79,6 +79,19 @@ export function badgeForEmailStatus(st) {
   return '<span class="badge ' + def[0] + '">' + def[1] + '</span>';
 }
 
+export function badgeForReadStatus(customer) {
+  if (!customer.email_status || customer.email_status === 'generated') {
+    return '<span class="badge badge-gray">未发送</span>';
+  }
+  if (customer.email_status === 'failed') {
+    return '<span class="badge badge-red">发送失败</span>';
+  }
+  if (customer.tracking_last_opened_at) {
+    return '<span class="badge badge-green">已读</span>';
+  }
+  return '<span class="badge badge-yellow">未读</span>';
+}
+
 // ---- Download blob as file ----
 export function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);

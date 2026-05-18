@@ -27,6 +27,10 @@
       {% endfor %}
     </ul>
     <div class="nav-actions">
+      <a href="/customer-eval/" class="nav-job-badge" id="navJobBadge" style="display:none" title="有任务正在运行">
+        <span class="job-dot"></span>
+        <span id="navJobCount">0</span>
+      </a>
       <button class="theme-toggle" onclick="toggleTheme()" title="切换明暗模式">
         &#9788;
       </button>
@@ -53,6 +57,87 @@
       html.setAttribute('data-theme', next);
       localStorage.setItem('platform-theme', next);
     }
+  </script>
+  <script>
+    // ---- Global Job Tracker ----
+    (function() {
+      const STORAGE_KEY = 'platform_active_jobs';
+      const POLL_INTERVAL = 5000;
+
+      function getJobs() {
+        try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
+        catch { return []; }
+      }
+
+      function saveJobs(jobs) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(jobs));
+      }
+
+      // Expose for other scripts to register jobs
+      window.__trackJob = function(jobId, label, agentName) {
+        var jobs = getJobs();
+        // Deduplicate
+        jobs = jobs.filter(function(j) { return j.jobId !== jobId; });
+        jobs.push({ jobId: jobId, label: label || jobId.slice(0,8), agent: agentName || 'customer-eval', startedAt: Date.now() });
+        saveJobs(jobs);
+        updateBadge();
+      };
+
+      window.__removeJob = function(jobId) {
+        var jobs = getJobs().filter(function(j) { return j.jobId !== jobId; });
+        saveJobs(jobs);
+        updateBadge();
+      };
+
+      window.__getTrackedJobs = function() {
+        return getJobs();
+      };
+
+      async function checkJobStatus(job) {
+        try {
+          var r = await fetch('/customer-eval/api/jobs/' + job.jobId);
+          if (!r.ok) {
+            // Job not found or completed → remove
+            window.__removeJob(job.jobId);
+            return;
+          }
+          var data = await r.json();
+          if (data.status === 'finished' || data.status === 'failed' || data.status === 'stopped') {
+            window.__removeJob(job.jobId);
+          }
+        } catch(e) {
+          // Network error — keep job in list, retry next cycle
+        }
+      }
+
+      async function pollAll() {
+        var jobs = getJobs();
+        if (!jobs.length) { updateBadge(); return; }
+        for (var i = 0; i < jobs.length; i++) {
+          await checkJobStatus(jobs[i]);
+        }
+        updateBadge();
+      }
+
+      function updateBadge() {
+        var badge = document.getElementById('navJobBadge');
+        var count = document.getElementById('navJobCount');
+        if (!badge || !count) return;
+        var jobs = getJobs();
+        var n = jobs.length;
+        if (n > 0) {
+          badge.style.display = 'flex';
+          count.textContent = n;
+        } else {
+          badge.style.display = 'none';
+        }
+      }
+
+      // Initial check
+      updateBadge();
+      // Poll every 5 seconds
+      setInterval(pollAll, POLL_INTERVAL);
+    })();
   </script>
   {% block scripts %}{% endblock %}
 </body>

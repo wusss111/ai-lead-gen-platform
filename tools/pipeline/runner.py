@@ -16,6 +16,7 @@ from tools.pipeline.io_excel import (
     ensure_output_columns,
     load_excel_io,
     output_column_names,
+    read_input_csv,
     read_input_xlsx,
     write_result_xlsx,
 )
@@ -30,6 +31,7 @@ from tools.pipeline.scoring import cap_model_data_quality, manual_review_flag, o
 logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[dict[str, Any]], None]
+ControlCallback = Callable[[], str | None]  # Returns "cancel", "pause", or None
 
 _SKIP_NAME_INFER_COLS = frozenset(
     {
@@ -78,10 +80,19 @@ def _infer_company_name(
 def _cell(v: Any) -> str:
     if v is None:
         return ""
+    # Guard against pandas Series (can happen with duplicate columns)
+    if hasattr(v, "iloc") and hasattr(v, "shape"):
+        try:
+            if len(v) > 0:
+                v = v.iloc[0]
+            else:
+                return ""
+        except Exception:
+            pass
     try:
         if pd.isna(v):
             return ""
-    except TypeError:
+    except (TypeError, ValueError):
         pass
     s = str(v).strip()
     return "" if s.lower() == "nan" else s
@@ -125,6 +136,82 @@ def _flatten_eval(ev: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+class _ControlExit(Exception):
+    """Signal to stop the pipeline early (cancel or pause)."""
+    def __init__(self, reason: str, row: int):
+        super().__init__(reason)
+        self.reason = reason
+        self.row = row
+
+
+def _save_partial(
+    df: pd.DataFrame,
+    start: int,
+    end: int,
+    meta: dict[str, Any],
+    detail_rows: list[dict[str, Any]],
+    output_path: Path,
+    append_output: bool,
+    detail_sheet: bool,
+    highlight_manual_review: bool,
+) -> None:
+    """Save partially processed rows to output Excel so no work is lost."""
+    batch_df = df.iloc[start:end].copy()
+    source_rows_1b = list(range(start + 1, end + 1))
+    summary_part = build_summary_export_df(
+        batch_df.reset_index(drop=True), meta, source_row_1based=source_rows_1b,
+    )
+    detail_df = pd.DataFrame(detail_rows) if detail_rows and detail_sheet else None
+
+    # Merge with existing output if appending
+    old_summary = pd.DataFrame()
+    old_detail = pd.DataFrame()
+    if append_output and output_path.is_file():
+        try:
+            old_summary = pd.read_excel(output_path, sheet_name=MAIN_SHEET_NAME, engine="openpyxl")
+            if detail_sheet:
+                try:
+                    old_detail = pd.read_excel(output_path, sheet_name="Detail", engine="openpyxl")
+                except ValueError:
+                    old_detail = pd.DataFrame()
+        except Exception:
+            old_summary = pd.DataFrame()
+            old_detail = pd.DataFrame()
+
+    if not old_summary.empty:
+        summary_df = pd.concat([old_summary, summary_part], ignore_index=True, sort=False)
+    else:
+        summary_df = summary_part
+
+    if detail_sheet and detail_df is not None and not detail_df.empty:
+        detail_merged = pd.concat([old_detail, detail_df], ignore_index=True, sort=False) if not old_detail.empty else detail_df
+    else:
+        detail_merged = old_detail if (detail_sheet and not old_detail.empty) else None
+
+    write_result_xlsx(
+        summary_df, output_path, detail_df=detail_merged,
+        highlight_manual_review=highlight_manual_review,
+    )
+    logger.info("Partial save: rows %d-%d (%d rows) written to %s", start + 1, end, end - start, output_path)
+
+
+def _write_progress(output_path: Path, next_row: int, total: int, batch_info_out: dict[str, Any] | None) -> None:
+    """Write progress.json for later resume."""
+    import json as _json
+    prog_path = output_path.parent / "progress.json"
+    bs = 0
+    if batch_info_out:
+        bs = batch_info_out.get("batch_size", 0)
+    _json_data = {
+        "total_rows": total,
+        "next_start_row": next_row,
+        "batch_size": bs if bs > 0 else 50,
+        "has_more": next_row < total,
+    }
+    prog_path.write_text(_json.dumps(_json_data, ensure_ascii=False, indent=2), encoding="utf-8")
+    logger.info("Progress saved: next_start_row=%s total=%s", next_row, total)
+
+
 def run_pipeline(
     input_path: Path,
     output_path: Path,
@@ -143,6 +230,7 @@ def run_pipeline(
     highlight_manual_review: bool = True,
     stop_on_error: bool = False,
     progress_callback: ProgressCallback | None = None,
+    control_callback: ControlCallback | None = None,
     batch_info_out: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
     def report(**payload: Any) -> None:
@@ -152,7 +240,10 @@ def run_pipeline(
     meta = load_excel_io(excel_io_path)
     meta = merge_meta_with_file(meta, pipeline_config_path)
     meta = merge_meta_from_env(meta)
-    df, missing_required = read_input_xlsx(input_path, meta=meta)
+    if input_path.suffix.lower() == ".csv":
+        df, missing_required = read_input_csv(input_path, meta=meta)
+    else:
+        df, missing_required = read_input_xlsx(input_path, meta=meta)
     if missing_required:
         raise ValueError(f"输入表缺少必填列: {', '.join(missing_required)}")
 
@@ -217,6 +308,41 @@ def run_pipeline(
             label=name[:120],
             message=f"第 {i + 1}/{n_total} 行（本批 {i - start + 1}/{n_batch}）：{name[:80]}",
         )
+
+        # ---- Check for cancel/pause signal ----
+        if control_callback:
+            signal = control_callback()
+            if signal in ("cancel", "pause"):
+                logger.info("收到 %s 信号，保存已处理的 %d 行后退出", signal, i - start)
+                # Save partial results
+                _save_partial(df, start, i, meta, detail_rows, output_path,
+                              append_output, detail_sheet, highlight_manual_review)
+                # Report reason
+                report(
+                    phase="done",
+                    current=i - start,
+                    total=n_batch,
+                    message=f"已{sgnal}：已处理 {i - start} 行并保存",
+                    total_rows=n_total,
+                    batch_start_row=start,
+                    batch_end_exclusive=i,
+                    has_more=True,
+                    control=signal,
+                )
+                if batch_info_out is not None:
+                    batch_info_out.update({
+                        "total_rows": n_total,
+                        "batch_start_row": start,
+                        "batch_end_exclusive": i,
+                        "has_more": True,
+                        "control": signal,
+                    })
+                if signal == "pause":
+                    # Write progress.json for resume
+                    _write_progress(output_path, i, n_total, batch_info_out)
+                # Raise to stop the loop
+                raise _ControlExit(signal, i)
+        # ---------------------------------------
 
         df.at[i, "fetched_pages"] = _fmt_pages(pages)
         df.at[i, "search_fallback_used"] = "no"

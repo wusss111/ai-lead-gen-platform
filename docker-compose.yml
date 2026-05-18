@@ -1,20 +1,17 @@
-# 公司内部：客户评估网页 + 异步 Worker
-#
-# 使用前：复制 .env.example 为 .env 并填写 DEEPSEEK_API_KEY；宿主机需存在 output/catalog.json（供只读挂载）。
-#   docker compose up -d --build
-# 浏览器：http://127.0.0.1:8000 （若配置了 INTERNAL_WEB_BASIC_USER 则需 Basic 认证）
-#
-# 拉取 docker.io 失败时，可在 .env 中设置镜像（示例值需按你当前可用的镜像站文档替换）：
-#   PYTHON_IMAGE=python:3.11-slim-bookworm
-#   REDIS_IMAGE=redis:7-alpine
-#
-# 若出现 Work-horse terminated / OOM：Docker Desktop → Resources → Memory 建议 ≥ 6GB，
-# 可酌情把 worker 的 mem_limit 改为 2g。
+# ============================================================
+#  AI 获客平台 — 生产环境 Docker Compose
+# ============================================================
+#  启动: docker compose up -d
+#  停止: docker compose down
+#  查看: docker compose ps
+#  日志: docker compose logs -f <service>
+# ============================================================
 
 services:
+  # ---- Redis (仅 Docker 内网可见) ----
   redis:
-    image: ${REDIS_IMAGE:-redis:7-alpine}
-    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    image: redis:7-alpine
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru --save 900 1 --save 300 10
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -22,66 +19,126 @@ services:
       timeout: 3s
       retries: 10
       start_period: 5s
+    volumes:
+      - redis_data:/data
 
+  # ---- Web 服务 (FastAPI + uvicorn) ----
   web:
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim-bookworm}
-    image: creat-agent-internal:local
-    command: uvicorn internal_web.main:app --host 0.0.0.0 --port 8000
-    ports:
-      - "8000:8000"
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12-slim-bookworm}
+    image: ai-lead-platform:latest
+    command: >
+      python -m uvicorn src.core.app:app
+      --host 0.0.0.0
+      --port 8000
+      --log-level warning
+    restart: unless-stopped
     environment:
-      REDIS_URL: redis://redis:6379/0
-      INTERNAL_WEB_DATA_DIR: /data
+      - REDIS_URL=redis://redis:6379/0
+      - PLATFORM_DATA_DIR=/data
     env_file:
       - .env
     volumes:
-      - web_data:/data
-      - ./output:/app/output:ro
+      - platform_data:/data
+      - ./var/gmail_client_secret.json:/app/var/gmail_client_secret.json:ro
+      - ./var/gmail_token.json:/app/var/gmail_token.json:ro
     depends_on:
       redis:
         condition: service_healthy
-    restart: unless-stopped
     healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)",
-        ]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
       interval: 15s
       timeout: 10s
       retries: 5
-      start_period: 40s
+      start_period: 20s
 
-  worker:
+  # ---- RQ Worker: 客户评估 ----
+  worker-eval:
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim-bookworm}
-    image: creat-agent-internal:local
-    command: rq worker -u redis://redis:6379/0 eval_jobs --verbose
-    init: true
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12-slim-bookworm}
+    image: ai-lead-platform:latest
+    command: rq worker -u redis://redis:6379/0 customer_eval:default
+    restart: unless-stopped
     environment:
-      REDIS_URL: redis://redis:6379/0
-      INTERNAL_WEB_DATA_DIR: /data
-      MALLOC_ARENA_MAX: "2"
+      - REDIS_URL=redis://redis:6379/0
+      - PLATFORM_DATA_DIR=/data
     env_file:
       - .env
     volumes:
-      - web_data:/data
-      - ./output:/app/output:ro
-    shm_size: "1gb"
-    mem_limit: 3g
+      - platform_data:/data
+      - ./var/gmail_client_secret.json:/app/var/gmail_client_secret.json:ro
+      - ./var/gmail_token.json:/app/var/gmail_token.json:ro
     depends_on:
       redis:
         condition: service_healthy
+
+  # ---- RQ Worker: 邮件生成 ----
+  worker-mail:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12-slim-bookworm}
+    image: ai-lead-platform:latest
+    command: rq worker -u redis://redis:6379/0 inquiry_mail:default
     restart: unless-stopped
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - PLATFORM_DATA_DIR=/data
+    env_file:
+      - .env
+    volumes:
+      - platform_data:/data
+      - ./var/gmail_client_secret.json:/app/var/gmail_client_secret.json:ro
+      - ./var/gmail_token.json:/app/var/gmail_token.json:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ---- RQ Worker: 邮件发送 ----
+  worker-send:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.12-slim-bookworm}
+    image: ai-lead-platform:latest
+    command: rq worker -u redis://redis:6379/0 inquiry_mail:send
+    restart: unless-stopped
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - PLATFORM_DATA_DIR=/data
+    env_file:
+      - .env
+    volumes:
+      - platform_data:/data
+      - ./var/gmail_client_secret.json:/app/var/gmail_client_secret.json:ro
+      - ./var/gmail_token.json:/app/var/gmail_token.json:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ---- Nginx 反向代理 ----
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    restart: unless-stopped
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/ssl:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - web
 
 volumes:
-  web_data:
+  redis_data:
+  platform_data:
+  nginx_logs:

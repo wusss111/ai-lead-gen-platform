@@ -10,18 +10,18 @@
   <a href="/crm/" class="back-link">&larr; 返回客户列表</a>
 
   <!-- Header -->
-  <div class="detail-header" style="margin-top:1rem">
+  <div class="detail-header">
     <div class="detail-score-ring {% if customer.overall_score_computed and customer.overall_score_computed >= 4 %}score-high{% elif customer.overall_score_computed and customer.overall_score_computed >= 2.5 %}score-medium{% else %}score-low{% endif %}">
       <span class="score-num">{{ "%.1f"|format(customer.overall_score_computed or 0) }}</span>
       <span class="score-label">综合评分</span>
     </div>
     <div>
-      <h1 style="margin-bottom:0.25rem">{{ customer.company_name or '未命名' }}</h1>
-      <p style="color:var(--pico-muted-color);margin:0">
-        {% if customer.website %}<a href="{{ customer.website }}" target="_blank">{{ customer.website }}</a> &middot; {% endif %}
+      <h1 class="detail-company-name">{{ customer.company_name or '未命名' }}</h1>
+      <p class="detail-meta">
+        {% if customer.website %}<a href="{{ customer.website }}" target="_blank" rel="noopener">{{ customer.website }}</a> &middot; {% endif %}
         {{ customer.country_region or '' }}
       </p>
-      <div style="margin-top:0.5rem;display:flex;gap:0.5rem;flex-wrap:wrap">
+      <div class="detail-badges">
         <span class="badge badge-{% if customer.deal_recommendation=='high_intent' %}green{% elif customer.deal_recommendation=='watch' %}yellow{% else %}gray{% endif %}">
           {% if customer.deal_recommendation=='high_intent' %}高意向{% elif customer.deal_recommendation=='watch' %}观察{% else %}不建议{% endif %}
         </span>
@@ -38,26 +38,26 @@
 
   <!-- Scores Grid -->
   <div class="detail-grid">
-    <div class="stat-card">
+    <div class="detail-card">
       <h4>产品匹配</h4>
-      <div class="score-badge {% if customer.product_fit_score and customer.product_fit_score >= 4 %}score-high{% elif customer.product_fit_score and customer.product_fit_score >= 2 %}score-medium{% else %}score-low{% endif %}">{{ customer.product_fit_score or '-' }}</div>
-      <p style="font-size:0.85rem;margin-top:0.5rem">{{ customer.product_fit_reasons or '-' }}</p>
+      <div class="detail-score-badge {% if customer.product_fit_score and customer.product_fit_score >= 4 %}score-high{% elif customer.product_fit_score and customer.product_fit_score >= 2 %}score-medium{% else %}score-low{% endif %}">{{ customer.product_fit_score or '-' }}</div>
+      <p class="detail-card-text">{{ customer.product_fit_reasons or '-' }}</p>
     </div>
-    <div class="stat-card">
+    <div class="detail-card">
       <h4>能力评分</h4>
-      <div class="score-badge {% if customer.capability_score and customer.capability_score >= 4 %}score-high{% elif customer.capability_score and customer.capability_score >= 2 %}score-medium{% else %}score-low{% endif %}">{{ customer.capability_score or '-' }}</div>
-      <p style="font-size:0.85rem;margin-top:0.5rem">{{ customer.capability_signals or '-' }}</p>
+      <div class="detail-score-badge {% if customer.capability_score and customer.capability_score >= 4 %}score-high{% elif customer.capability_score and customer.capability_score >= 2 %}score-medium{% else %}score-low{% endif %}">{{ customer.capability_score or '-' }}</div>
+      <p class="detail-card-text">{{ customer.capability_signals or '-' }}</p>
     </div>
-    <div class="stat-card">
+    <div class="detail-card">
       <h4>资信安全</h4>
-      <div class="score-badge {% if customer.reputation_safety_score and customer.reputation_safety_score >= 4 %}score-high{% elif customer.reputation_safety_score and customer.reputation_safety_score >= 2 %}score-medium{% else %}score-low{% endif %}">{{ customer.reputation_safety_score or '-' }}</div>
-      <p style="font-size:0.85rem;margin-top:0.5rem">{{ customer.reputation_concerns or '无重大顾虑' }}</p>
+      <div class="detail-score-badge {% if customer.reputation_safety_score and customer.reputation_safety_score >= 4 %}score-high{% elif customer.reputation_safety_score and customer.reputation_safety_score >= 2 %}score-medium{% else %}score-low{% endif %}">{{ customer.reputation_safety_score or '-' }}</div>
+      <p class="detail-card-text">{{ customer.reputation_concerns or '无重大顾虑' }}</p>
     </div>
   </div>
 
   <!-- Detail Info Grid -->
-  <div class="detail-grid" style="margin-top:1.5rem">
-    <div class="stat-card">
+  <div class="detail-grid">
+    <div class="detail-card">
       <h4>联系信息</h4>
       <dl>
         <dt>联系人</dt><dd>{{ customer.contact_name or '-' }}</dd>
@@ -66,7 +66,7 @@
         <dt>地址</dt><dd>{{ customer.contact_address or '-' }}</dd>
       </dl>
     </div>
-    <div class="stat-card">
+    <div class="detail-card">
       <h4>业务信息</h4>
       <dl>
         <dt>目标产品</dt><dd>{{ customer.target_products or '-' }}</dd>
@@ -75,36 +75,81 @@
         <dt>角色依据</dt><dd>{{ customer.buyer_seller_reason or '-' }}</dd>
       </dl>
     </div>
-    <div class="stat-card">
+    <div class="detail-card">
       <h4>合作建议</h4>
-      <p style="font-weight:600">{{ customer.deal_recommendation or '-' }}</p>
-      <p style="font-size:0.85rem">{{ customer.next_action or '-' }}</p>
-      <hr />
+      <p style="font-weight:600;margin-top:0">{{ customer.deal_recommendation or '-' }}</p>
+      <p class="detail-card-text">{{ customer.next_action or '-' }}</p>
+      <hr style="border-color:rgba(255,255,255,0.06);margin:0.75rem 0" />
       <h4>资信详情</h4>
-      <p style="font-size:0.85rem">{{ customer.reputation_facts or '-' }}</p>
+      <p class="detail-card-text">{{ customer.reputation_facts or '-' }}</p>
       {% if customer.reputation_sources %}
-      <p style="font-size:0.8rem;color:var(--pico-muted-color)">来源: {{ customer.reputation_sources }}</p>
+      <p class="detail-card-text" style="color:var(--text-muted)">来源: {{ customer.reputation_sources }}</p>
       {% endif %}
     </div>
   </div>
 
-  <!-- Data quality & errors -->
-  <div class="stat-card" style="margin-top:1rem">
+  <!-- Data quality -->
+  <div class="detail-card" style="margin-top:0.75rem">
     <h4>数据质量</h4>
-    <p>质量等级: <strong>{{ customer.data_quality or '-' }}</strong> &middot;
+    <p style="margin:0.25rem 0">质量等级: <strong>{{ customer.data_quality or '-' }}</strong> &middot;
        抓取页面: {{ customer.fetched_pages or '无' }}
     </p>
     {% if customer.errors %}
-    <p style="color:var(--danger-color);font-size:0.85rem">错误: {{ customer.errors }}</p>
+    <p style="color:var(--color-danger);font-size:0.84rem;margin:0.25rem 0">错误: {{ customer.errors }}</p>
     {% endif %}
   </div>
 
   <!-- Notes -->
   {% if customer.notes %}
-  <div class="stat-card" style="margin-top:1rem">
+  <div class="detail-card" style="margin-top:0.75rem">
     <h4>备注</h4>
-    <p style="font-size:0.85rem;white-space:pre-wrap">{{ customer.notes }}</p>
+    <p class="detail-card-text" style="white-space:pre-wrap">{{ customer.notes }}</p>
   </div>
   {% endif %}
+
+  <!-- Salesperson Assignment -->
+  <div class="detail-card" style="margin-top:0.75rem">
+    <h4>&#128101; 销售负责</h4>
+    <div style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap">
+      <select id="salespersonSelect" class="detail-sp-select">
+        <option value="">-- 未分配 --</option>
+      </select>
+      <span id="assignStatus" style="font-size:0.82rem; color:var(--text-muted)"></span>
+    </div>
+  </div>
+
+  <!-- Email Tracking -->
+  <div class="detail-card" style="margin-top:0.75rem">
+    <h4>&#9993; 邮件追踪</h4>
+    <div style="display:flex; gap:2rem; flex-wrap:wrap">
+      <div>
+        <span style="font-size:0.78rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em">邮件状态</span>
+        <p style="font-weight:600; margin:0.2rem 0">
+          {% if customer.email_status == 'sent' %}<span class="badge badge-green">已发送</span>
+          {% elif customer.email_status == 'generated' %}<span class="badge badge-blue">已生成</span>
+          {% elif customer.email_status == 'failed' %}<span class="badge badge-red">发送失败</span>
+          {% else %}<span class="badge badge-gray">未发送</span>
+          {% endif %}
+        </p>
+      </div>
+      <div>
+        <span style="font-size:0.78rem; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.05em">已读状态</span>
+        <p style="font-weight:600; margin:0.2rem 0">
+          {% if customer.tracking_last_opened_at %}
+            <span class="badge badge-green">已读 &middot; {{ customer.email_open_count or 1 }} 次</span>
+            <small style="display:block; color:var(--text-muted); margin-top:0.15rem">最后: {{ customer.tracking_last_opened_at }}</small>
+          {% elif customer.email_status == 'sent' %}
+            <span class="badge badge-yellow">未读</span>
+          {% else %}
+            <span class="badge badge-gray">-</span>
+          {% endif %}
+        </p>
+      </div>
+    </div>
+  </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="/static/crm/js/crm_detail.js"></script>
 {% endblock %}
