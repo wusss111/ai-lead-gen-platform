@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>{% block title %}外贸客户平台{% endblock %}</title>
   <link rel="stylesheet" href="/static/css/platform.css" />
+  <link rel="stylesheet" href="/static/chat/css/chat.css?v=4" />
   {% block head_extra %}{% endblock %}
 </head>
 <body>
@@ -140,5 +141,8 @@
     })();
   </script>
   {% block scripts %}{% endblock %}
+
+  <script type="module" src="/static/chat/js/chat.js?v=4"></script>
+  {% include "chat_widget.html" %}
 </body>
 </html>

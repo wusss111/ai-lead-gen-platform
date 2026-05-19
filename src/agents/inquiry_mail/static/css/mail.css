@@ -299,6 +299,10 @@
 }
 .edit-textarea:focus { outline: none; border-color: var(--ocean-300); }
 
+/* ---- New columns: salesperson + read status ---- */
+.col-sp   { min-width: 70px; max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.col-read { width: 56px; text-align: center; }
+
 /* ---- Action column ---- */
 .col-action { width: 60px; text-align: center; }
 
@@ -340,6 +344,43 @@
   border-bottom: 1px solid rgba(255,255,255,0.06);
   font-size: 0.84rem;
   display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;
+}
+
+/* ---- Batch Mail Bar ---- */
+.batch-mail-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+}
+.batch-mail-actions {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+/* ---- Generation Summary ---- */
+.gen-summary {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 0.5rem 0;
+}
+.summary-stat { font-size: 0.84rem; }
+
+/* ---- Modal footer ---- */
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding-top: 0.75rem;
+  margin-top: 0.75rem;
+  border-top: 1px solid rgba(255,255,255,0.06);
 }
 
 /* ---- Responsive ---- */

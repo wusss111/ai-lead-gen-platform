@@ -35,22 +35,46 @@
         <option value="high_intent">高意向</option>
         <option value="watch">观察</option>
       </select>
+      <select id="filterMailStatus" onchange="window.loadEmailable()">
+        <option value="">全部状态</option>
+        <option value="draft">草稿</option>
+        <option value="confirmed">已确认</option>
+        <option value="sent">已发送</option>
+        <option value="failed">失败</option>
+      </select>
+      <select id="filterReadStatus" onchange="window.loadEmailable()">
+        <option value="">全部已读</option>
+        <option value="read">已读</option>
+        <option value="unread">未读</option>
+        <option value="unsent">未发送</option>
+      </select>
+      <select id="filterSalesperson" onchange="window.loadEmailable()">
+        <option value="">全部销售</option>
+        <option value="unassigned">未分配</option>
+      </select>
       <button class="btn-outline btn-sm" onclick="window.selectAll()">全选</button>
       <button class="btn-outline btn-sm" onclick="window.deselectAll()">取消</button>
+    </div>
+    <!-- Batch action bar -->
+    <div class="batch-mail-bar" id="batchMailBar">
+      <span id="selectCount" class="select-count">已选 0 位</span>
+      <div class="batch-mail-actions">
+        <button class="btn-outline btn-sm" onclick="window.batchConfirm()" id="btnBatchConfirm" title="确认选中的草稿邮件">&#10003; 批量确认</button>
+        <button class="btn-accent btn-sm" onclick="window.batchSend()" id="btnBatchSend" title="发送选中的已确认邮件">&#9993; 批量发送</button>
+      </div>
     </div>
     <div class="table-wrap">
       <table class="data-table">
         <thead><tr>
           <th class="col-cb"><input type="checkbox" id="checkAll" onchange="window.toggleAll(this)" /></th>
-          <th>公司</th><th>联系人</th><th>邮箱</th><th>综合分</th><th>推荐</th><th>邮件状态</th><th class="col-action">操作</th>
+          <th>公司</th><th>联系人</th><th>邮箱</th><th>综合分</th><th>推荐</th><th>邮件状态</th><th class="col-sp">负责销售</th><th class="col-read">已读</th><th class="col-action">操作</th>
         </tr></thead>
         <tbody id="customerTableBody">
-          <tr><td colspan="8" class="empty-cell"><p>加载中...</p></td></tr>
+          <tr><td colspan="10" class="empty-cell"><p>加载中...</p></td></tr>
         </tbody>
       </table>
     </div>
     <div class="select-bar">
-      <span id="selectCount" class="select-count">已选 0 位</span>
       <select id="langSelect" class="lang-select">
         <option value="auto">语言：自动检测</option>
         <option value="en">强制英文</option>
@@ -78,26 +102,21 @@
     </div>
   </div>
 
-  <!-- Step 3: Preview & Send -->
+  <!-- Step 3: Generation Complete -->
   <div class="mail-card" id="stepPreview" style="display:none">
     <div class="card-header">
       <div class="step-num">3</div>
       <div>
-        <h3>预览与发送</h3>
-        <p class="card-desc" id="previewDesc">检查邮件内容，点击正文可编辑，勾选后发送</p>
+        <h3>生成完成</h3>
+        <p class="card-desc" id="previewDesc">邮件已存为草稿，请在客户列表中查看、确认后发送。</p>
       </div>
     </div>
-    <div id="previewList"></div>
+    <div id="genSummary" class="gen-summary"></div>
     <div style="margin-top:0.75rem;display:flex;align-items:center;gap:0.5rem">
       <label style="font-size:0.84rem;display:flex;align-items:center;gap:0.3rem;cursor:pointer">
-        <input type="checkbox" id="chkTimezone" checked onchange="window.updateSendMode()" />
+        <input type="checkbox" id="chkTimezone" checked />
         时区感知（仅发送当地上班时间的客户）
       </label>
-    </div>
-    <div class="select-bar">
-      <button class="btn-accent" onclick="window.startSend()" id="btnSend">
-        &#9993; 发送选中邮件
-      </button>
     </div>
   </div>
 
@@ -132,6 +151,10 @@
             </div>
           </div>
         </div>
+      </div>
+      <div class="modal-footer" id="emailModalFooter">
+        <span id="emailModalStatus"></span>
+        <button class="btn-accent btn-sm" id="btnModalConfirm" onclick="window.confirmFromModal()" style="display:none">&#10003; 确认发送</button>
       </div>
     </div>
   </div>

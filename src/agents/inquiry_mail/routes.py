@@ -43,27 +43,49 @@ def get_emailable_customers(
     _: Annotated[None, Depends(require_auth)],
     search: str = "",
     deal_recommendation: str = "",
+    email_status: str = "",
+    read_status: str = "",
+    salesperson_id: str = "",
     limit: int = 50,
 ) -> JSONResponse:
     """List customers that can receive inquiry emails."""
     db = get_db()
     where = [
-        "contact_email IS NOT NULL",
-        "contact_email != ''",
+        "c.contact_email IS NOT NULL",
+        "c.contact_email != ''",
     ]
     params: list[Any] = []
     if search.strip():
-        where.append("(company_name LIKE ? OR contact_email LIKE ?)")
+        where.append("(c.company_name LIKE ? OR c.contact_email LIKE ?)")
         kw = f"%{search.strip()}%"
         params.extend([kw, kw])
     if deal_recommendation.strip():
-        where.append("deal_recommendation = ?")
+        where.append("c.deal_recommendation = ?")
         params.append(deal_recommendation.strip())
+    if email_status.strip():
+        where.append("c.email_status = ?")
+        params.append(email_status.strip())
+    if read_status.strip() == "read":
+        where.append("c.tracking_last_opened_at IS NOT NULL")
+    elif read_status.strip() == "unread":
+        where.append("(c.email_status = 'sent' AND c.tracking_last_opened_at IS NULL)")
+    elif read_status.strip() == "unsent":
+        where.append("(c.email_status IS NULL OR c.email_status NOT IN ('sent','failed'))")
+    if salesperson_id.strip():
+        if salesperson_id.strip() == "unassigned":
+            where.append("c.assigned_salesperson_id IS NULL")
+        else:
+            where.append("c.assigned_salesperson_id = ?")
+            params.append(int(salesperson_id))
     where_clause = " AND ".join(where)
     rows = db.execute(
-        f"SELECT id, company_name, contact_name, contact_email, country_region, deal_recommendation, "
-        f"overall_score_computed, email_status FROM customer "
-        f"WHERE {where_clause} ORDER BY overall_score_computed DESC LIMIT ?",
+        f"SELECT c.id, c.company_name, c.contact_name, c.contact_email, c.country_region, "
+        f"c.deal_recommendation, c.overall_score_computed, c.email_status, "
+        f"c.assigned_salesperson_id, COALESCE(s.name, '') as salesperson_name, "
+        f"c.tracking_last_opened_at "
+        f"FROM customer c "
+        f"LEFT JOIN salesperson s ON c.assigned_salesperson_id = s.id "
+        f"WHERE {where_clause} ORDER BY c.overall_score_computed DESC LIMIT ?",
         params + [limit],
     ).fetchall()
     return JSONResponse(dicts_from_rows(rows))
@@ -113,16 +135,18 @@ def generate_emails(
 def get_saved_emails(
     _: Annotated[None, Depends(require_auth)],
 ) -> JSONResponse:
-    """Return customers who already have generated/sent/failed emails."""
+    """Return customers who already have generated/draft/confirmed/sent/failed emails."""
     db = get_db()
     rows = db.execute(
-        "SELECT id, company_name, contact_name, contact_email, country_region, "
-        "overall_score_computed, deal_recommendation, "
-        "email_status, email_subject, email_body, "
-        "email_sent_at, tracking_last_opened_at, assigned_salesperson_id "
-        "FROM customer "
-        "WHERE email_status IN ('generated','sent','failed') "
-        "ORDER BY email_status, overall_score_computed DESC"
+        "SELECT c.id, c.company_name, c.contact_name, c.contact_email, c.country_region, "
+        "c.overall_score_computed, c.deal_recommendation, "
+        "c.email_status, c.email_subject, c.email_body, "
+        "c.email_sent_at, c.tracking_last_opened_at, c.assigned_salesperson_id, "
+        "COALESCE(s.name, '') as salesperson_name "
+        "FROM customer c "
+        "LEFT JOIN salesperson s ON c.assigned_salesperson_id = s.id "
+        "WHERE c.email_status IN ('draft','confirmed','generated','sent','failed') "
+        "ORDER BY c.email_status, c.overall_score_computed DESC"
     ).fetchall()
     return JSONResponse(dicts_from_rows(rows))
 
@@ -296,6 +320,27 @@ def update_email(
     )
     db.commit()
     return JSONResponse({"status": "ok"})
+
+
+@router.post("/api/emails/confirm")
+def confirm_emails(
+    _: Annotated[None, Depends(require_auth)],
+    customer_ids: str = Form(""),
+) -> JSONResponse:
+    """Confirm draft/generated emails, making them ready to send."""
+    ids = _parse_ids(customer_ids)
+    if not ids:
+        raise HTTPException(400, "请提供要确认的客户ID")
+
+    db = get_db()
+    placeholders = ",".join("?" for _ in ids)
+    cur = db.execute(
+        f"UPDATE customer SET email_status='confirmed', updated_at=datetime('now','localtime') "
+        f"WHERE id IN ({placeholders}) AND email_status IN ('draft','generated')",
+        ids,
+    )
+    db.commit()
+    return JSONResponse({"status": "ok", "confirmed_count": cur.rowcount})
 
 
 @router.get("/api/smtp-check")

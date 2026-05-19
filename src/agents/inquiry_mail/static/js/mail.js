@@ -1,12 +1,12 @@
-// mail.js — Inquiry email generation, inline editing, send with cross-page persistence
+// mail.js — Inquiry email generation, draft/confirm flow, batch send
 import { apiFetch, apiPost } from '/static/js/api.js';
-import { badgeForRecommendation, badgeForEmailStatus, showToast } from '/static/js/utils.js';
+import { badgeForRecommendation, badgeForEmailStatus, badgeForReadStatus, showToast } from '/static/js/utils.js';
 
 // ---- State ----
 let searchTimer = null;
 let currentJobId = null;
 let selectedCustomerIds = new Set();
-let _previewEmails = [];  // { customer_id, company_name, contact_email, subject, body, body_html, email_status }
+let generatedCount = 0;  // how many emails were generated in current job
 const STORAGE_JOB_KEY = 'mail_current_job';
 
 // ---- DOM helpers ----
@@ -15,6 +15,7 @@ function el(id) { return document.getElementById(id); }
 // ---- Init ----
 document.addEventListener('DOMContentLoaded', () => {
   checkSmtp();
+  loadSalespersons();
   loadEmailable();
   restoreState();
 });
@@ -38,28 +39,21 @@ async function restoreState() {
   const savedJobId = getStoredJobId();
   if (!savedJobId) return;
 
+  currentJobId = savedJobId;
+
   // Check if there are saved emails in the database
   try {
     const r = await apiFetch('/inquiry-mail/api/emails/saved');
     if (r.ok) {
       const emails = await r.json();
       if (emails && emails.length > 0) {
-        currentJobId = savedJobId;
-        _previewEmails = emails.map(e => ({
-          customer_id: e.id,
-          company_name: e.company_name,
-          contact_name: e.contact_name,
-          contact_email: e.contact_email,
-          subject: e.email_subject || '',
-          body: e.email_body || '',
-          body_html: e.email_body_html || '',
-          email_status: e.email_status,
-          sent_at: e.email_sent_at,
-          tracking_last_opened_at: e.tracking_last_opened_at,
-        }));
-        renderPreview(_previewEmails);
+        generatedCount = emails.length;
         el('stepPreview').style.display = '';
-        el('previewDesc').textContent = '已恢复 ' + emails.length + ' 封已生成的邮件';
+        el('previewDesc').textContent = '已恢复 ' + emails.length + ' 封邮件（'
+          + emails.filter(e => e.email_status === 'draft' || e.email_status === 'generated').length + ' 封草稿, '
+          + emails.filter(e => e.email_status === 'confirmed').length + ' 封已确认'
+          + '）';
+        el('genSummary').innerHTML = buildSummaryHtml(emails);
         showToast('已恢复 ' + emails.length + ' 封邮件', 'info');
       }
     }
@@ -81,12 +75,26 @@ async function restoreState() {
       } else if (d.status === 'finished' && d.result) {
         el('stepResult').style.display = '';
         renderSendResults(d.result);
-        el('btnSend').disabled = false;
       }
     }
   } catch(e) {
     console.error('restoreState send status error:', e);
   }
+}
+
+function buildSummaryHtml(emails) {
+  // emails from JSON (just generated) don't have email_status — treat all as draft
+  // emails from DB (saved endpoint) have email_status
+  const draft = emails.filter(e => !e.email_status || e.email_status === 'draft' || e.email_status === 'generated').length;
+  const confirmed = emails.filter(e => e.email_status === 'confirmed').length;
+  const sent = emails.filter(e => e.email_status === 'sent').length;
+  const failed = emails.filter(e => e.email_status === 'failed').length;
+  let parts = [];
+  if (draft > 0) parts.push('<span class="summary-stat"><span class="badge badge-yellow">' + draft + ' 草稿</span></span>');
+  if (confirmed > 0) parts.push('<span class="summary-stat"><span class="badge badge-blue">' + confirmed + ' 已确认</span></span>');
+  if (sent > 0) parts.push('<span class="summary-stat"><span class="badge badge-green">' + sent + ' 已发送</span></span>');
+  if (failed > 0) parts.push('<span class="summary-stat"><span class="badge badge-red">' + failed + ' 失败</span></span>');
+  return parts.length > 0 ? parts.join(' ') : '<span style="color:var(--text-muted)">无邮件</span>';
 }
 
 // ---- SMTP check ----
@@ -114,9 +122,15 @@ window.debounceLoad = debounceLoad;
 async function loadEmailable() {
   const search = el('searchInput')?.value?.trim() || '';
   const rec = el('filterRec')?.value || '';
+  const mailStatus = el('filterMailStatus')?.value || '';
+  const readStatus = el('filterReadStatus')?.value || '';
+  const spId = el('filterSalesperson')?.value || '';
   const params = new URLSearchParams();
   if (search) params.set('search', search);
   if (rec) params.set('deal_recommendation', rec);
+  if (mailStatus) params.set('email_status', mailStatus);
+  if (readStatus) params.set('read_status', readStatus);
+  if (spId) params.set('salesperson_id', spId);
   params.set('limit', '100');
 
   const r = await apiFetch('/inquiry-mail/api/customers/emailable?' + params.toString());
@@ -126,27 +140,46 @@ async function loadEmailable() {
 }
 window.loadEmailable = loadEmailable;
 
+async function loadSalespersons() {
+  try {
+    const r = await apiFetch('/crm/api/salespersons');
+    if (!r.ok) return;
+    const list = await r.json();
+    const sel = el('filterSalesperson');
+    if (!sel) return;
+    list.forEach(sp => {
+      const opt = document.createElement('option');
+      opt.value = sp.id;
+      opt.textContent = sp.name;
+      sel.appendChild(opt);
+    });
+  } catch(e) { console.error('loadSalespersons error:', e); }
+}
+
 function renderCustomerTable(customers) {
   const tbody = el('customerTableBody');
   if (!customers.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-cell"><p>无匹配记录</p></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" class="empty-cell"><p>无匹配记录</p></td></tr>';
     return;
   }
   tbody.innerHTML = customers.map(c => {
     const sel = selectedCustomerIds.has(c.id);
-    const hasEmail = c.email_status === 'generated' || c.email_status === 'sent' || c.email_status === 'failed';
+    const hasEmail = c.email_status && c.email_status !== 'none';
     const actionBtn = hasEmail
       ? `<button class="btn-sm btn-outline" onclick="window.showEmailModal(${c.id})" title="查看/编辑邮件">&#128065; 查看</button>`
       : '<span style="color:var(--text-muted);font-size:0.78rem">-</span>';
+    const spName = c.salesperson_name || '';
     return `
     <tr class="${sel ? 'selected-row' : ''}">
       <td class="col-cb"><input type="checkbox" ${sel ? 'checked' : ''} onchange="window.toggleCustomer(${c.id}, this.checked)" /></td>
-      <td>${esc(c.company_name) || '-'}</td>
-      <td>${esc(c.contact_name) || '-'}</td>
-      <td>${esc(c.contact_email) || '-'}</td>
+      <td title="${escAttr(c.company_name || '')}">${esc(c.company_name) || '-'}</td>
+      <td title="${escAttr(c.contact_name || '')}">${esc(c.contact_name) || '-'}</td>
+      <td title="${escAttr(c.contact_email || '')}">${esc(c.contact_email) || '-'}</td>
       <td>${c.overall_score_computed != null ? c.overall_score_computed.toFixed(1) : '-'}</td>
       <td>${badgeForRecommendation(c.deal_recommendation)}</td>
       <td>${badgeForEmailStatus(c.email_status)}</td>
+      <td class="col-sp" title="${escAttr(spName)}">${esc(spName) || '<span style="color:var(--text-muted);font-size:0.78rem">未分配</span>'}</td>
+      <td class="col-read">${badgeForReadStatus(c)}</td>
       <td class="col-action">${actionBtn}</td>
     </tr>`;
   }).join('');
@@ -231,19 +264,17 @@ async function pollGenerate() {
     if (st === 'finished') {
       if (window.__removeJob) window.__removeJob(currentJobId);
       updateProgress(100, '生成完成', '完成');
-      // Map emails for preview
-      _previewEmails = (d.emails || []).map(e => ({
-        customer_id: e.customer_id,
-        company_name: e.company_name || '',
-        contact_name: e.contact_name || '',
-        contact_email: e.contact_email || '',
-        subject: e.subject || '',
-        body: e.body || '',
-        body_html: e.body_html || '',
-        email_status: 'generated',
-      }));
-      renderPreview(_previewEmails);
+
+      // Count generated emails
+      generatedCount = (d.emails || []).length;
+      el('stepPreview').style.display = '';
+      el('genSummary').innerHTML = buildSummaryHtml(d.emails || []);
+
+      // Reload table to show updated statuses
+      await loadEmailable();
+
       el('btnGenerate').disabled = false;
+      showToast('已生成 ' + generatedCount + ' 封邮件（草稿），请查看并确认后发送', 'info');
       return;
     }
     if (st === 'failed') {
@@ -268,161 +299,83 @@ function updateProgress(pct, label, phase) {
   if (phaseEl) phaseEl.textContent = phase;
 }
 
-// ---- Preview with inline editing ----
-function renderPreview(emails) {
-  const list = el('previewList');
-  if (!list) return;
-  el('stepPreview').style.display = '';
-
-  list.innerHTML = emails.map((e, i) => {
-    const isSent = e.email_status === 'sent';
-    const disabled = isSent ? 'disabled' : '';
-    const sentBadge = isSent ? '<span class="badge badge-green">已发送</span>' : '';
-    const statusClass = isSent ? 'email-sent' : '';
-    return `
-    <div class="preview-card ${statusClass}" id="previewCard${i}">
-      <div class="preview-top">
-        <label class="preview-check-label ${isSent ? 'sent-label' : ''}">
-          <input type="checkbox" class="preview-check" value="${i}" ${disabled} onchange="window.updateSendBtn()" />
-          <strong>${esc(e.company_name || '?')}</strong>
-          <span style="color:var(--text-muted);font-size:0.8rem">${esc(e.contact_email || '')}</span>
-        </label>
-        <div class="preview-badges">${sentBadge}</div>
-      </div>
-
-      <div class="preview-field">
-        <span class="field-label">主题</span>
-        <div class="field-display" id="subjectDisplay${i}" ondblclick="window.startEdit(${i}, 'subject')">${esc(e.subject || '')}</div>
-        <div class="field-edit" id="subjectEdit${i}" style="display:none">
-          <input type="text" id="subjectInput${i}" class="edit-input" value="${escAttr(e.subject || '')}" />
-          <button class="btn-sm btn-outline" onclick="window.saveEdit(${i}, 'subject')">保存</button>
-          <button class="btn-sm btn-outline" onclick="window.cancelEdit(${i}, 'subject', '${escAttr(e.subject || '')}')">取消</button>
-        </div>
-      </div>
-
-      <div class="preview-field">
-        <span class="field-label">正文 <small style="font-weight:400">(双击编辑)</small></span>
-        <div class="field-display body-preview" id="bodyDisplay${i}" ondblclick="window.startEdit(${i}, 'body')">${e.body_html || esc(e.body || '')}</div>
-        <div class="field-edit" id="bodyEdit${i}" style="display:none">
-          <textarea id="bodyInput${i}" class="edit-textarea" rows="8">${escHtml(e.body || '')}</textarea>
-          <div style="display:flex;gap:0.35rem;margin-top:0.35rem">
-            <button class="btn-sm btn-outline" onclick="window.saveEdit(${i}, 'body')">保存修改</button>
-            <button class="btn-sm btn-outline" onclick="window.cancelEdit(${i}, 'body', '${escAttr(e.body || '')}')">取消</button>
-          </div>
-        </div>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-// ---- Inline editing ----
-window.startEdit = function(index, field) {
-  // Don't allow editing sent emails
-  if (_previewEmails[index]?.email_status === 'sent') return;
-  const display = el(field + 'Display' + index);
-  const edit = el(field + 'Edit' + index);
-  if (display) display.style.display = 'none';
-  if (edit) edit.style.display = '';
-  // Focus the input
-  const input = el(field + 'Input' + index);
-  if (input) setTimeout(() => input.focus(), 50);
-};
-
-window.cancelEdit = function(index, field, originalValue) {
-  const display = el(field + 'Display' + index);
-  const edit = el(field + 'Edit' + index);
-  const input = el(field + 'Input' + index);
-  if (input) input.value = originalValue || '';
-  if (display) display.style.display = '';
-  if (edit) edit.style.display = 'none';
-};
-
-window.saveEdit = async function(index, field) {
-  const email = _previewEmails[index];
-  if (!email || email.email_status === 'sent') return;
-  if (!email.customer_id) return;
-
-  const input = el(field + 'Input' + index);
-  const newValue = input ? input.value.trim() : '';
-
-  // Build form data with both fields (to preserve the other)
-  const fd = new FormData();
-  if (field === 'subject') {
-    fd.append('subject', newValue);
-    fd.append('body', email.body || '');
-  } else {
-    fd.append('subject', email.subject || '');
-    fd.append('body', newValue);
+// ---- Batch Confirm ----
+window.batchConfirm = async function() {
+  if (selectedCustomerIds.size === 0) {
+    showToast('请先勾选需要确认的客户（草稿状态）', 'error');
+    return;
   }
+  const ids = Array.from(selectedCustomerIds).join(',');
+  const fd = new FormData();
+  fd.append('customer_ids', ids);
 
   try {
-    const r = await apiFetch('/inquiry-mail/api/emails/' + email.customer_id, {
-      method: 'PUT',
-      body: fd,
-    });
+    const r = await apiPost('/inquiry-mail/api/emails/confirm', fd);
     if (!r.ok) {
       const txt = await r.text();
-      showToast('保存失败: ' + txt.slice(0, 200), 'error');
+      showToast('确认失败: ' + txt.slice(0, 200), 'error');
       return;
     }
-    // Update local state
-    if (field === 'subject') {
-      email.subject = newValue;
-      const display = el('subjectDisplay' + index);
-      if (display) display.textContent = newValue;
+    const data = await r.json();
+    if (data.confirmed_count > 0) {
+      showToast('已确认 ' + data.confirmed_count + ' 封邮件', 'info');
+      await loadEmailable();
+      // Update summary if visible
+      await refreshSummary();
     } else {
-      email.body = newValue;
-      const display = el('bodyDisplay' + index);
-      if (display) display.innerHTML = esc(newValue);
+      showToast('没有可确认的邮件（仅草稿状态的邮件可以确认）', 'warn');
     }
-    // Hide editor
-    const display = el(field + 'Display' + index);
-    const edit = el(field + 'Edit' + index);
-    if (display) display.style.display = '';
-    if (edit) edit.style.display = 'none';
-    showToast('已保存', 'info');
   } catch(e) {
-    console.error('saveEdit error:', e);
-    showToast('保存异常: ' + e.message, 'error');
+    console.error('batchConfirm error:', e);
+    showToast('确认异常: ' + e.message, 'error');
   }
 };
 
-window.updateSendBtn = function() {
-  // Just a visual update — actual check happens in startSend
-};
+// ---- Batch Send ----
+window.batchSend = async function() {
+  if (selectedCustomerIds.size === 0) {
+    showToast('请先勾选已确认的邮件', 'error');
+    return;
+  }
 
-// ---- Send ----
-window.startSend = async function() {
-  const checks = document.querySelectorAll('.preview-check:checked');
-  const idxs = Array.from(checks).map(cb => parseInt(cb.value));
-
-  if (idxs.length === 0) { showToast('请勾选要发送的邮件', 'error'); return; }
-
-  el('btnSend').disabled = true;
   const respectTz = el('chkTimezone')?.checked ?? true;
 
   const fd = new FormData();
   fd.append('job_id', currentJobId);
   fd.append('respect_tz', respectTz ? '1' : '0');
-  const cids = idxs.map(i => _previewEmails[i]?.customer_id).filter(Boolean);
-  fd.append('customer_ids', cids.join(','));
+  fd.append('customer_ids', Array.from(selectedCustomerIds).join(','));
 
-  const r = await apiPost('/inquiry-mail/api/send', fd);
-  if (!r.ok) {
-    const txt = await r.text();
-    showToast('发送失败: ' + txt.slice(0, 200), 'error');
-    el('btnSend').disabled = false;
-    return;
+  try {
+    const r = await apiPost('/inquiry-mail/api/send', fd);
+    if (!r.ok) {
+      const txt = await r.text();
+      showToast('发送失败: ' + txt.slice(0, 200), 'error');
+      return;
+    }
+    const data = await r.json();
+    if (window.__trackJob) window.__trackJob(currentJobId + '_send', '发送邮件', 'inquiry-mail');
+    showToast('发送任务已提交', 'info');
+    el('stepResult').style.display = '';
+    el('sendResults').innerHTML = '<p>正在连接发送队列...</p>';
+    el('sendResultDesc').textContent = '0 发送, 0 失败';
+    pollSend();
+  } catch(e) {
+    console.error('batchSend error:', e);
+    showToast('发送异常: ' + e.message, 'error');
   }
-  const data = await r.json();
-  if (window.__trackJob) window.__trackJob(currentJobId + '_send', '发送邮件', 'inquiry-mail');
-  showToast('发送任务已提交', 'info');
-  el('stepResult').style.display = '';
-  el('sendResults').innerHTML = '<p>正在连接发送队列...</p>';
-  el('sendResultDesc').textContent = '0 发送, 0 失败';
-  pollSend();
 };
 
+async function refreshSummary() {
+  try {
+    const r = await apiFetch('/inquiry-mail/api/emails/saved');
+    if (r.ok) {
+      const emails = await r.json();
+      el('genSummary').innerHTML = buildSummaryHtml(emails);
+    }
+  } catch(e) {}
+}
+
+// ---- Send polling ----
 async function pollSend() {
   const poll = async () => {
     const r = await apiFetch('/inquiry-mail/api/send-status/' + currentJobId);
@@ -446,21 +399,8 @@ async function pollSend() {
       if (window.__removeJob) window.__removeJob(currentJobId + '_send');
       clearJobId();
       renderSendResults(d.result);
-      el('btnSend').disabled = false;
-      // Update preview emails status
-      if (d.result.emails) {
-        _previewEmails = d.result.emails.map(e => ({
-          customer_id: e.customer_id,
-          company_name: e.company_name || '',
-          contact_name: e.contact_name || '',
-          contact_email: e.contact_email || '',
-          subject: e.subject || '',
-          body: e.body || '',
-          body_html: e.body_html || '',
-          email_status: e.email_status || 'sent',
-        }));
-        renderPreview(_previewEmails);
-      }
+      await loadEmailable();
+      await refreshSummary();
       return;
     }
     if (d.status === 'failed') {
@@ -468,7 +408,6 @@ async function pollSend() {
       clearJobId();
       el('sendResults').innerHTML = '<p style="color:var(--color-danger)">发送任务失败</p>';
       el('sendResultDesc').textContent = '发送失败';
-      el('btnSend').disabled = false;
       return;
     }
     setTimeout(poll, 2000);
@@ -484,70 +423,45 @@ function renderSendResults(result) {
   div.innerHTML = '<p><strong>发送完成</strong> — 成功 ' + sent + ' 封，失败 ' + failed + ' 封</p>';
 }
 
-window.updateSendMode = function() {
-  // Visual feedback handled by CSS
-};
-
-// ---- Utils ----
-function esc(s) {
-  if (!s && s !== 0) return '';
-  const d = document.createElement('div');
-  d.textContent = String(s);
-  return d.innerHTML;
-}
-
-function escAttr(s) {
-  if (!s && s !== 0) return '';
-  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/'/g, '&#39;');
-}
-
-function escHtml(s) {
-  if (!s && s !== 0) return '';
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-// ---- Email Modal (view & edit per customer) ----
+// ---- Email Modal (view + edit + confirm) ----
 let _modalCustomerId = null;
 
 window.showEmailModal = async function(customerId) {
   _modalCustomerId = customerId;
 
-  // First check if we have the email in preview
-  const existing = _previewEmails.find(e => e.customer_id === customerId);
-
-  if (existing && existing.subject !== undefined) {
-    populateModal(customerId, existing.company_name, existing.contact_email, existing.subject, existing.body, existing.email_status);
-    return;
-  }
-
-  // Fetch from API
+  // Fetch from API for fresh data
   try {
     const r = await apiFetch('/crm/api/customers/' + customerId);
     if (!r.ok) { showToast('加载失败', 'error'); return; }
     const c = await r.json();
-    const hasEmail = c.email_status === 'generated' || c.email_status === 'sent' || c.email_status === 'failed';
+    const hasEmail = c.email_status === 'draft' || c.email_status === 'generated' || c.email_status === 'confirmed' || c.email_status === 'sent' || c.email_status === 'failed';
     if (!hasEmail) { showToast('该客户尚未生成邮件', 'info'); return; }
-    populateModal(customerId, c.company_name, c.contact_email, c.email_subject || '', c.email_body || '', c.email_status);
+    populateModal(c);
   } catch(e) {
     console.error('showEmailModal error:', e);
     showToast('加载异常', 'error');
   }
 };
 
-function populateModal(customerId, company, email, subject, body, status) {
-  el('emailModalTitle').textContent = company || '客户邮件';
+function populateModal(c) {
+  el('emailModalTitle').textContent = c.company_name || '客户邮件';
   el('emailModalMeta').innerHTML =
-    '<span style="color:var(--text-muted)">' + esc(email || '') + '</span>' +
-    (status === 'sent' ? ' <span class="badge badge-green">已发送</span>' : status === 'failed' ? ' <span class="badge badge-red">失败</span>' : ' <span class="badge badge-blue">已生成</span>');
+    '<span style="color:var(--text-muted)">' + esc(c.contact_email || '') + '</span>' +
+    ' ' + badgeForEmailStatus(c.email_status || '');
 
-  el('emailModalSubjectDisplay').textContent = subject || '(无主题)';
-  el('emailModalBodyDisplay').innerHTML = esc(body || '') || '<span style="color:var(--text-muted)">(无正文)</span>';
+  el('emailModalSubjectDisplay').textContent = c.email_subject || '(无主题)';
+  el('emailModalBodyDisplay').innerHTML = esc(c.email_body || '') || '<span style="color:var(--text-muted)">(无正文)</span>';
 
   // Hide editors
   el('emailModalSubjectEdit').style.display = 'none';
   el('emailModalSubjectDisplay').style.display = '';
   el('emailModalBodyEdit').style.display = 'none';
   el('emailModalBodyDisplay').style.display = '';
+
+  // Show/hide confirm button based on status
+  const canConfirm = c.email_status === 'draft' || c.email_status === 'generated';
+  el('btnModalConfirm').style.display = canConfirm ? '' : 'none';
+  el('emailModalStatus').textContent = '';
 
   // Show modal
   el('emailModal').style.display = 'flex';
@@ -567,7 +481,6 @@ window.editModalField = function(field) {
   if (field === 'subject') {
     input.value = (display.textContent === '(无主题)' ? '' : display.textContent);
   } else {
-    // body: get text from display
     input.value = display.textContent === '(无正文)' ? '' : (display.innerText || '');
   }
 
@@ -582,7 +495,6 @@ window.saveModalEdit = async function(field) {
   const newValue = input ? input.value.trim() : '';
 
   try {
-    // Fetch current values to preserve the other field
     const cr = await apiFetch('/crm/api/customers/' + _modalCustomerId);
     if (!cr.ok) { showToast('保存失败', 'error'); return; }
     const c = await cr.json();
@@ -599,7 +511,6 @@ window.saveModalEdit = async function(field) {
     const r = await apiFetch('/inquiry-mail/api/emails/' + _modalCustomerId, { method: 'PUT', body: fd });
     if (!r.ok) { const txt = await r.text(); showToast('保存失败: ' + txt.slice(0, 200), 'error'); return; }
 
-    // Update display
     const display = el('emailModal' + field.charAt(0).toUpperCase() + field.slice(1) + 'Display');
     const edit = el('emailModal' + field.charAt(0).toUpperCase() + field.slice(1) + 'Edit');
     if (field === 'subject') {
@@ -609,13 +520,6 @@ window.saveModalEdit = async function(field) {
     }
     display.style.display = '';
     edit.style.display = 'none';
-
-    // Also update preview emails array if it exists
-    const pe = _previewEmails.find(e => e.customer_id === _modalCustomerId);
-    if (pe) {
-      if (field === 'subject') pe.subject = newValue;
-      else pe.body = newValue;
-    }
 
     showToast('已保存', 'info');
   } catch(e) {
@@ -630,3 +534,45 @@ window.cancelModalEdit = function(field) {
   display.style.display = '';
   edit.style.display = 'none';
 };
+
+// ---- Confirm from Modal ----
+window.confirmFromModal = async function() {
+  if (!_modalCustomerId) return;
+
+  const fd = new FormData();
+  fd.append('customer_ids', String(_modalCustomerId));
+
+  try {
+    const r = await apiPost('/inquiry-mail/api/emails/confirm', fd);
+    if (!r.ok) {
+      const txt = await r.text();
+      showToast('确认失败: ' + txt.slice(0, 200), 'error');
+      return;
+    }
+    const data = await r.json();
+    if (data.confirmed_count > 0) {
+      showToast('已确认，可以发送了', 'info');
+      el('btnModalConfirm').style.display = 'none';
+      el('emailModalStatus').innerHTML = '<span class="badge badge-blue">已确认</span>';
+      // Reload table
+      await loadEmailable();
+      await refreshSummary();
+    }
+  } catch(e) {
+    console.error('confirmFromModal error:', e);
+    showToast('确认异常: ' + e.message, 'error');
+  }
+};
+
+// ---- Utils ----
+function esc(s) {
+  if (!s && s !== 0) return '';
+  const d = document.createElement('div');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
+function escAttr(s) {
+  if (!s && s !== 0) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}

@@ -71,7 +71,9 @@ export function badgeForReview(flag) {
 
 export function badgeForEmailStatus(st) {
   const map = {
-    'generated': ['badge-blue', '已生成'],
+    'draft': ['badge-yellow', '草稿'],
+    'generated': ['badge-yellow', '草稿'],
+    'confirmed': ['badge-blue', '已确认'],
     'sent': ['badge-green', '已发送'],
     'failed': ['badge-red', '发送失败'],
   };
@@ -80,7 +82,7 @@ export function badgeForEmailStatus(st) {
 }
 
 export function badgeForReadStatus(customer) {
-  if (!customer.email_status || customer.email_status === 'generated') {
+  if (!customer.email_status || customer.email_status === 'draft' || customer.email_status === 'generated' || customer.email_status === 'confirmed') {
     return '<span class="badge badge-gray">未发送</span>';
   }
   if (customer.email_status === 'failed') {

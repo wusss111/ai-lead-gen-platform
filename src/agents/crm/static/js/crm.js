@@ -18,6 +18,11 @@ function esc(s) {
   return d.innerHTML;
 }
 
+function escAttr(s) {
+  if (!s && s !== 0) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function badgeForRole(role) {
   const map = { buyer: ['badge-green', '买方'], seller: ['badge-yellow', '卖方'], both: ['badge-blue', '兼营'], unclear: ['badge-gray', '不明'] };
   const d = map[role] || ['badge-gray', role || '-'];
@@ -140,7 +145,7 @@ function renderStats() {
 function renderTable(customers) {
   const tbody = el('tableBody');
   if (!customers.length) {
-    tbody.innerHTML = `<tr><td colspan="13" class="empty-cell">
+    tbody.innerHTML = `<tr><td colspan="11" class="empty-cell">
       <div class="empty-icon">&#128269;</div><p>无匹配记录</p><p style="font-size:0.78rem;margin-top:0.25rem">尝试调整筛选条件或<a href="/customer-eval/">导入新客户</a></p>
     </td></tr>`;
     return;
@@ -152,10 +157,10 @@ function renderTable(customers) {
     return `
     <tr${rowClass}>
       <td class="col-cb"><input type="checkbox" class="cb-customer" ${sel ? 'checked' : ''} onchange="toggleCustomer(${c.id}, this.checked)" /></td>
-      <td class="col-company"><a href="/crm/${c.id}">${esc(c.company_name) || '-'}</a></td>
-      <td class="col-country"><span class="country-flag">${esc(c.country_region) || '-'}</span></td>
-      <td class="col-contact">${esc(c.contact_name) || '-'}</td>
-      <td class="col-email" style="font-family:var(--font-mono);font-size:0.78rem">${esc(c.contact_email) || '-'}</td>
+      <td class="col-company"><a href="/crm/${c.id}" title="${escAttr(c.company_name || '')}">${esc(c.company_name) || '-'}</a></td>
+      <td class="col-country" title="${escAttr(c.country_region || '')}"><span class="country-flag">${esc(c.country_region) || '-'}</span></td>
+      <td class="col-contact" title="${escAttr(c.contact_name || '')}">${esc(c.contact_name) || '-'}</td>
+      <td class="col-email" style="font-family:var(--font-mono);font-size:0.78rem" title="${escAttr(c.contact_email || '')}">${esc(c.contact_email) || '-'}</td>
       <td class="col-score"><strong>${c.overall_score_computed != null ? c.overall_score_computed.toFixed(1) : '-'}</strong></td>
       <td class="col-rec">${badgeForRecommendation(c.deal_recommendation)}</td>
       <td class="col-review">${badgeForReview(c.manual_review_flag)}</td>
@@ -166,8 +171,6 @@ function renderTable(customers) {
           ${salespersonCache.map(s => `<option value="${s.id}" ${s.id === c.assigned_salesperson_id ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}
         </select>
       </td>
-      <td class="col-mail">${badgeForEmailStatus(c.email_status)}</td>
-      <td class="col-read">${badgeForReadStatus(c)}</td>
       <td class="col-time">${fmtTime(c.created_at)}</td>
     </tr>`;
   }).join('');

@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}知识库 - 外贸客户平台{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="/static/knowledge-base/css/kb.css" />
+{% endblock %}
+
+{% block content %}
+<div class="kb-page">
+
+  <div class="kb-header">
+    <div>
+      <h1 class="kb-title">知识库管理</h1>
+      <span class="kb-subtitle">管理产品信息、公司文档、采购表单等企业知识，支撑智能搜索与邮件生成</span>
+    </div>
+  </div>
+
+  <!-- 统计卡片 -->
+  <div class="kb-stats" id="kbStats"></div>
+
+  <!-- Tab 切换 -->
+  <div class="kb-tabs">
+    {% for c in collections %}
+    <button class="kb-tab" data-collection="{{ c }}" onclick="window.switchTab('{{ c }}')">{{ c }}</button>
+    {% endfor %}
+  </div>
+
+  <!-- 导入区 -->
+  <div class="kb-card">
+    <div class="card-header"><h3>导入文档</h3></div>
+    <div class="kb-import-row">
+      <div class="kb-import-field">
+        <label>目录路径</label>
+        <div class="kb-path-row">
+          <input type="text" id="importDir" placeholder="例如: D:\docs\产品资料\" />
+          <button class="btn-accent btn-sm" onclick="window.importDirectory()">导入</button>
+        </div>
+        <small>扫描目录下所有 PDF / 图片 / TXT / Markdown 文件，通过 RQ 后台处理</small>
+      </div>
+      <div class="kb-import-field">
+        <label>OCR 整理</label>
+        <label class="kb-check"><input type="checkbox" id="chkOcr" checked /> 图片 OCR 后 DeepSeek 文字整理</label>
+      </div>
+    </div>
+  </div>
+
+  <!-- 文本粘贴 -->
+  <div class="kb-card">
+    <div class="card-header"><h3>粘贴文本</h3></div>
+    <div class="kb-paste-row">
+      <input type="text" id="pasteTitle" placeholder="文档标题（可选）" class="kb-paste-title" />
+      <textarea id="pasteText" placeholder="在此粘贴产品介绍、公司信息等文本内容..." rows="6"></textarea>
+      <div style="display:flex;justify-content:flex-end;gap:0.5rem;margin-top:0.5rem">
+        <button class="btn-outline btn-sm" onclick="window.ingestText()">入库</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 文档列表 -->
+  <div class="kb-card">
+    <div class="card-header">
+      <h3 id="docListTitle">文档列表</h3>
+      <span class="card-desc" id="docListCount"></span>
+    </div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr>
+          <th class="col-fname">文件名</th><th class="col-cat">所属分类</th><th class="col-cnum">Chunk 数</th><th class="col-action">操作</th>
+        </tr></thead>
+        <tbody id="docTableBody">
+          <tr><td colspan="4" class="empty-cell">加载中...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 搜索测试 -->
+  <div class="kb-card">
+    <div class="card-header"><h3>检索测试</h3></div>
+    <div class="kb-search-row">
+      <select id="searchMode">
+        <option value="hybrid_rerank">混合检索 + 重排序</option>
+        <option value="hybrid">混合检索（BM25 + 语义）</option>
+        <option value="vector">纯语义检索</option>
+      </select>
+      <input type="search" id="searchQuery" placeholder="输入查询关键词..." onkeydown="if(event.key==='Enter')window.testSearch()" />
+      <button class="btn-accent btn-sm" onclick="window.testSearch()">搜索</button>
+    </div>
+    <div id="searchResults" class="kb-search-results"></div>
+  </div>
+
+  <!-- Job 进度 -->
+  <div class="kb-card" id="kbJobsCard" style="display:none">
+    <div class="card-header"><h3>处理任务</h3></div>
+    <div id="kbJobsList"></div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="/static/knowledge-base/js/kb.js"></script>
+{% endblock %}

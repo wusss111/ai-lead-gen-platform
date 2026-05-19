@@ -1,0 +1,41 @@
+<!-- 智能客服 — 右下角挂件 -->
+<button id="chatBubble" onclick="window.toggleChat()" title="智能客服">
+  <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+  <span id="chatBadge">0</span>
+</button>
+
+<div id="chatPanel">
+  <div id="chatPanelHeader">
+    <div id="chatPanelHeaderLeft">
+      <div id="chatAvatar">&#9889;</div>
+      <div>
+        <div id="chatPanelTitle">小贸 · AI助手</div>
+        <div id="chatPanelSubtitle">在线 · 即刻响应</div>
+      </div>
+    </div>
+    <div id="chatPanelActions">
+      <button onclick="window.clearChat()" title="清空对话">&#8634;</button>
+      <button onclick="window.toggleChat()" title="最小化">&minus;</button>
+    </div>
+  </div>
+
+  <div id="chatMessages">
+    <div class="chat-msg chat-msg-assistant">
+      <div class="chat-msg-bubble">
+        你好，我是<strong>小贸</strong>，你的智能商务助手。<br><br>
+        我可以帮你：<br>
+        &#8226; 搜索产品、价格、文档<br>
+        &#8226; 查找客户信息<br>
+        &#8226; 生成询盘邮件<br>
+        &#8226; 查看邮件状态
+      </div>
+    </div>
+  </div>
+
+  <div id="chatInputArea">
+    <textarea id="chatInput" placeholder="输入消息…" rows="1"
+      onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();window.sendChat()}"
+      oninput="this.style.height='auto';this.style.height=Math.min(this.scrollHeight,120)+'px'"></textarea>
+    <button id="chatSendBtn" onclick="window.sendChat()">&#8593;</button>
+  </div>
+</div>

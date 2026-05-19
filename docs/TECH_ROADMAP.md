@@ -1,134 +1,159 @@
-# 技术栈与实现路线（对齐 PRD）
+# 技术栈与实现路线
 
-**文档版本**：1.0  
+**文档版本**：2.0
 **配套**：[PRD.md](./PRD.md)
 
 ---
 
-## 1. 技术栈（MVP 冻结）
+## 1. 技术栈
+
+### 1.1 核心框架
 
 | 层级 | 选型 | 说明 |
 |------|------|------|
-| 语言 | Python 3.11+（建议） | 与现有 `tools/` 一致 |
-| Excel | `pandas` + `openpyxl` | 读写 `.xlsx`；条件格式用于复核行标红（可选） |
-| HTTP 抓取 | `httpx` | 异步可选；同步 MVP 即可；超时、重试、限流 |
-| 正文抽取 | `trafilatura`（首选） | 失败时可降级为极简 HTML strip（实现内兜底） |
-| LLM | **DeepSeek**（OpenAI 兼容） | 复用 [tools/deepseek_client.py](../tools/deepseek_client.py)；`response_format=json_object` |
-| JSON | 标准库 `json` + 可选 `json-repair` 或重试 | 解析失败时有限次重试或降级空结构并写 `errors` |
-| 配置 | 环境变量 + 可选 `yaml`/`json` 配置文件 | API Key、模型名、权重、阈值 |
-| 缓存 | 本地目录 `cache/`（gitignore） | 按 URL hash 存原文或抽取文本，便于抽查 |
+| Web 框架 | FastAPI (Python) | 异步支持，自动 API 文档 |
+| ASGI 服务器 | Uvicorn | 高性能，支持热重载 |
+| 任务队列 | Redis + RQ | Windows 兼容 (SimpleWorker)，无 Celery 依赖 |
+| 数据库 | SQLite (WAL 模式) | 轻量，无需独立服务，线程本地连接 |
+| 模板引擎 | Jinja2 (原生) | 不用 Starlette 封装（避免缓存 bug） |
+| 前端 | Vanilla JS (ES Modules) | 零构建步骤，浏览器原生支持 |
 
-**明确不引入（MVP）**
+### 1.2 AI / LLM
 
-- FastAPI / Celery / Redis  
-- Playwright（可作为 Phase 2 可选项写入 Backlog）  
-- 任意商业搜索 SDK  
+| 组件 | 选型 | 说明 |
+|------|------|------|
+| 大模型 | DeepSeek V4 (OpenAI 兼容) | flash 日常推理，pro 复杂任务 |
+| 嵌入模型 | paraphrase-multilingual-MiniLM-L12-v2 | fastembed + ONNX Runtime，384 维，CPU 推理 |
+| 向量数据库 | ChromaDB (SQLite 后端) | 轻量，与 SQLite 一致的文件存储模式 |
+
+### 1.3 检索系统
+
+| 优化 | 技术 | 效果 |
+|------|------|------|
+| Query 改写 | DeepSeek 改写为多条变体 | 口语→关键词，跨语言适配 |
+| 混合检索 | BM25 (rank_bm25) + 语义检索 (ChromaDB) | 精确型号匹配 + 语义理解 |
+| 融合排序 | RRF (Reciprocal Rank Fusion, k=60) | 合并两路检索结果 |
+| 重排序 | DeepSeek 对 top-15 逐条打分 | 排除初检噪音，取 top-5 |
+| 父子文档 | 子 200 字检索 → 返回父 1000-1500 字 | 小块精准匹配 + 大块完整上下文 |
+
+### 1.4 文档处理
+
+| 格式 | 工具 | 说明 |
+|------|------|------|
+| PDF | pdfplumber | 流式逐页，支持文本层提取 |
+| 图片 | pytesseract + DeepSeek 清理 | 中文 OCR (chi_sim)，AI 整理碎片文字 |
+| XLSX | openpyxl | read_only 模式，JSON 序列化结构化内容 |
+| DOCX | python-docx | 段落级读取 |
+| TXT/MD | 原生 | UTF-8 直接读取 |
+
+### 1.5 前端
+
+| 层级 | 选型 | 说明 |
+|------|------|------|
+| CSS 框架 | PicoCSS (定制) | 暗色主题 / 亮色主题 |
+| 字体 | Cormorant Garamond + Work Sans + JetBrains Mono | 衬线标题 + 无衬线正文 + 等宽数据 |
+| C/S 交互 | SSE (Server-Sent Events) | 流式聊天 + 思维链 |
+| 状态管理 | localStorage | 聊天历史、主题偏好、任务追踪 |
+
+### 1.6 部署
+
+| 模式 | 方式 | 适用场景 |
+|------|------|----------|
+| 本地开发 | `start_all.bat` (Redis + Workers + Uvicorn) | Windows 开发 |
+| Docker | `docker compose up -d --build` | Linux 生产 |
 
 ---
 
-## 2. 仓库目标结构（实现时按此落地）
+## 2. 仓库结构
 
 ```text
 d:\creat_agent\
-  docs\
-    PRD.md                 # 需求与验收（本仓库权威）
-    TECH_ROADMAP.md        # 本文
-  schemas\
-    eval_result.schema.json   # LLM 输出 JSON Schema
-    excel_io.json              # 列约定与默认权重/复核规则元数据
-  product_kb\
-    v1\
-      kb.json                  # 我方话术、负面清单、目标客群等（版本化）
-  tools\
-    deepseek_client.py         # 已有
-    build_product_catalog.py   # 已有 → output/catalog.json
-    eval_company_fit.py        # 可演进为「单行评估」或与新 CLI 共享 prompt
-    pipeline/                  # 新增建议
-      __init__.py
-      io_excel.py              # 读模板、写结果、列校验
-      fetch_cache.py           # 抓取 + 缓存 + 重试
-      evidence.py              # 合并抓取文本与 evidence_paste
-      scoring.py               # overall_score_computed、manual_review_flag
-      llm_eval.py              # 组装 messages、调用 chat_json、校验字段
-  run_customer_pipeline.py     # 或 tools/run_customer_pipeline.py：CLI 入口
-  requirements.txt             # 追加 httpx、trafilatura 等
-  .gitignore                   # 忽略 cache/、.env
+  docs/
+    PRD.md                   # 需求文档
+    TECH_ROADMAP.md          # 本文
+    ARCHITECTURE.md          # 底层框架与工作流编排
+  src/
+    core/                    # 框架层：app 工厂、配置、DB、Redis、认证
+    agents/                  # Agent 自动发现
+      customer_eval/         #   Agent 1: 客户评估
+      crm/                   #   Agent 2: 客户资源管理
+      inquiry_mail/          #   Agent 3: 询盘邮件
+      knowledge_base/        #   Agent 4: 知识库管理
+      chat_agent/            #   Agent 5: 智能客服（挂件，无导航）
+    templates/               # 共享 Jinja2 模板
+    static/                  # 共享静态资源
+  tools/                     # 工具层
+    deepseek_client.py       #   DeepSeek API 客户端
+    embedding.py             #   嵌入服务 (fastembed + ONNX)
+    vector_store.py          #   ChromaDB + BM25 + 混合检索
+    doc_parser.py            #   文档解析 + 父子分块
+    email_generator.py       #   邮件生成
+    email_sender.py          #   SMTP 发送
+    gmail_sender.py          #   Gmail API 发送
+    country_timezone.py      #   时区感知
+    import_kb.py             #   CLI 批量入库
+    eval_retrieval.py        #   检索精度评测
+  var/                       # 运行时数据（gitignore）
+  requirements.txt
+  CLAUDE.md
 ```
 
-实现允许微调文件名，但**职责边界**应与上表一致，并在 PRD 验收项下可测。
+---
+
+## 3. 分阶段交付
+
+| 阶段 | 内容 | 核心产出 |
+|------|------|----------|
+| P0 | 基础框架：App 工厂、配置、DB、Redis、认证、Agent 发现 | `src/core/` |
+| P1 | Agent 1+2：客户评估（上传→AI→入库）+ CRM（浏览/搜索/筛选） | `customer_eval/`, `crm/` |
+| P2 | Agent 3：询盘邮件（生成→预览→发送→追踪）、时区感知 | `inquiry_mail/` |
+| P3 | 平台化：全局任务追踪、高级筛选、Text-to-SQL、批量分配 | 全局增强 |
+| P4 | 知识库基础设施：嵌入服务、向量存储、文档解析、CLI 导入 | `tools/embedding.py`, `vector_store.py`, `doc_parser.py` |
+| P5 | Agent 4：知识库管理界面、检索评测 | `knowledge_base/` |
+| P6 | Agent 5：智能客服挂件、Function Calling、流式+思维链 | `chat_agent/` |
+| P7 | 存量集成 RAG + 全链路测试 | `email_generator.py`, `inquiry_mail/tasks.py` |
 
 ---
 
-## 3. 流水线（逻辑顺序）
+## 4. 新增依赖
 
-```mermaid
-flowchart TD
-  A[读入 xlsx] --> B{列校验}
-  B -->|缺 company_name| Z[写 errors 跳过或整表失败]
-  B --> C[解析 website 多 URL]
-  C --> D[按路径抓取与缓存]
-  D --> E[抽取正文]
-  E --> F[合并 evidence_paste]
-  F --> G[组装 catalog 加 product_kb 提示词]
-  G --> H[DeepSeek JSON]
-  H --> I[scoring 与 review 规则]
-  I --> J[写回 xlsx 与可选 Detail]
+```
+# AI / LLM
+openai>=1.0.0           # DeepSeek 兼容客户端
+
+# 向量检索
+chromadb>=1.5.0         # 向量数据库
+fastembed>=0.5.0        # 轻量嵌入 (ONNX, 无需 PyTorch)
+rank-bm25>=0.2.0        # BM25 关键词检索
+
+# 文档处理
+pdfplumber>=0.10.0      # PDF 解析
+pytesseract>=0.3.0      # OCR
+Pillow>=10.0.0          # 图片处理
+python-docx>=1.0.0      # DOCX 读取
+openpyxl>=3.1.0         # XLSX 读取
+
+# Web / 任务
+fastapi>=0.110.0        # Web 框架
+uvicorn>=0.27.0         # ASGI 服务器
+jinja2>=3.1.0           # 模板引擎
+redis>=5.0.0            # Redis 客户端
+rq>=1.16.0              # 任务队列
+
+# 工具
+httpx>=0.27.0           # HTTP 客户端
+pandas>=2.0.0           # 数据处理
+python-dotenv>=1.0.0    # 环境变量
+tqdm>=4.60.0            # 进度条
 ```
 
-**抓取路径建议（实现常量）**
-
-- 首页 + `/about`、`/about-us`、`/products`、`/contact`、`/company` 等（可配置列表）  
-- 单公司总字符上限，避免撑爆 context  
-
-**失败**  
-
-- 全部 URL 失败：不调用搜索 API；`errors` 记录原因；`data_quality=low`  
-- 若 `evidence_paste` 非空：仍将粘贴块送入模型，并在 `citations` 中区分来源  
+**系统依赖：** Tesseract-OCR Windows 版 + `chi_sim` 中文语言包
 
 ---
 
-## 4. LLM 契约（与 schema 对齐）
-
-- 输出必须为单一 JSON 对象，字段与 [schemas/eval_result.schema.json](../schemas/eval_result.schema.json) 一致（实现阶段若文件尚未创建，以 PRD 第 4 节字段为准先写 schema 再写代码）。  
-- **不得**由模型输出最终 `overall_score_computed`（或同名字段仅作参考时可命名 `overall_score_model_hint` 可选）；**对外统一使用程序计算值**。  
-- `citations[]`：`claim`、`source_url`、`source_snippet`；来自 `evidence_paste` 的条目须在 `claim` 或 snippet 中可辨认为用户粘贴。  
-- `data_quality`：模型对「证据是否足以支撑结论」的自评；程序可结合抓取结果做**上限封顶**（例如无抓取成功且粘贴很短 → 不高于 `medium`）。
-
----
-
-## 5. 分阶段交付（建议 Sprint）
-
-| 阶段 | 内容 | 产出 |
-|------|------|------|
-| P0 | `schemas/` + `product_kb/v1/kb.json` + 输入输出列在代码中常量与校验 | 可静态审查 |
-| P1 | `fetch_cache` + `evidence` + CLI 骨架；无 LLM 时 dry-run 写 `errors`/`fetched_pages` | 可测抓取 |
-| P2 | `llm_eval` 接 DeepSeek；写回主表列 + `eval_json` | 端到端 10 行样例 |
-| P3 | `scoring`、复核标志、openpyxl 条件格式（可选） | 满足 PRD 验收 5–6 |
-| P4 | 第二 Sheet `Detail`、日志与配置外置 | 便于生产使用 |
-
----
-
-## 6. 环境变量（与现有代码对齐）
-
-| 变量 | 必填 | 说明 |
-|------|------|------|
-| `DEEPSEEK_API_KEY` | 是 | |
-| `DEEPSEEK_MODEL` | 否 | 默认见 `deepseek_client.py` |
-| `DEEPSEEK_BASE_URL` | 否 | 默认官方兼容地址 |
-
-可选：`CATALOG_PATH`、`PRODUCT_KB_PATH`、`CACHE_DIR`、`PIPELINE_CONFIG_PATH`。
-
----
-
-## 7. 与现有脚本的关系
-
-- **`build_product_catalog.py`**：继续作为 `output/catalog.json` 的唯一生成入口；流水线读取 `catalog_version` 写入提示词或输出列。  
-- **`eval_company_fit.py`**：逻辑合并到 `pipeline/llm_eval.py` 或由其调用，避免两套 prompt 漂移；CLI 以 `run_customer_pipeline` 为主入口。  
-
----
-
-## 8. 修订记录
+## 5. 修订记录
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
-| 1.0 | 2026-05-07 | 首版：对齐 CLI、DeepSeek、evidence_paste、无自动搜索 |
+| 1.0 | 2026-05-07 | 首版：CLI 流水线技术栈 |
+| 2.0 | 2026-05-19 | 重构为平台级：5 Agent + RAG + 实时客服 |

@@ -1,0 +1,50 @@
+[
+  {
+    "query": "公司有哪些产品",
+    "relevant_docs": [],
+    "relevant_sections": ["产品"],
+    "description": "基础产品查询"
+  },
+  {
+    "query": "RJ45连接器的规格参数是什么",
+    "relevant_docs": [],
+    "relevant_sections": ["连接器", "RJ45"],
+    "description": "精确型号查询（测试 BM25）"
+  },
+  {
+    "query": "What are our main products",
+    "relevant_docs": [],
+    "relevant_sections": ["产品"],
+    "description": "英文跨语言查询"
+  },
+  {
+    "query": "这个产品的价格怎么样适合欧洲市场吗",
+    "relevant_docs": [],
+    "relevant_sections": ["产品", "价格", "认证"],
+    "description": "口语化模糊查询（测试 Query 改写）"
+  },
+  {
+    "query": "采购合同模板在哪里",
+    "relevant_docs": [],
+    "relevant_sections": ["采购", "合同", "表单"],
+    "description": "文档类型查询"
+  },
+  {
+    "query": "CE认证有哪些要求",
+    "relevant_docs": [],
+    "relevant_sections": ["认证", "CE", "合规"],
+    "description": "行业知识查询"
+  },
+  {
+    "query": "发货周期一般是多久",
+    "relevant_docs": [],
+    "relevant_sections": ["物流", "发货", "交期"],
+    "description": "业务流程查询"
+  },
+  {
+    "query": "SKU-88492 的库存情况",
+    "relevant_docs": [],
+    "relevant_sections": ["库存", "SKU"],
+    "description": "精确编号查询（测试混合检索 BM25）"
+  }
+]

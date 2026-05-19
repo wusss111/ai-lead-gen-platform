@@ -54,6 +54,9 @@ def generate_emails_job(
     if not rows:
         return {"generated": 0, "skipped": 0, "emails": []}
 
+    # 检索知识库：为每个客户注入产品/公司知识
+    _inject_knowledge_context(rows)
+
     def rq_progress(payload: dict[str, Any]) -> None:
         job = get_current_job()
         if job is None:
@@ -85,7 +88,7 @@ def generate_emails_job(
     for e in emails:
         if e.get("customer_id"):
             db.execute(
-                "UPDATE customer SET email_subject=?, email_body=?, email_status='generated', updated_at=datetime('now','localtime') WHERE id=?",
+                "UPDATE customer SET email_subject=?, email_body=?, email_status='draft', updated_at=datetime('now','localtime') WHERE id=?",
                 (e.get("subject", ""), e.get("body_text", ""), e["customer_id"]),
             )
     db.commit()
@@ -99,6 +102,40 @@ def generate_emails_job(
         "total": len(emails),
         "emails": emails,
     }
+
+
+def _inject_knowledge_context(rows: list[dict]) -> None:
+    """为每行客户数据注入知识库检索结果（原地修改 rows）。"""
+    try:
+        from tools.vector_store import search_multi
+    except Exception:
+        logger.warning("无法导入 vector_store，跳过知识库检索")
+        return
+
+    for row in rows:
+        query_parts = []
+        tp = str(row.get("target_products", ""))
+        cn = str(row.get("company_name", ""))
+        pf = str(row.get("product_fit_reasons", ""))
+        if tp:
+            query_parts.append(tp)
+        if cn:
+            query_parts.append(cn)
+        if pf:
+            query_parts.append(pf[:100])
+        query = " ".join(query_parts)[:200]
+
+        if not query.strip():
+            continue
+
+        try:
+            results = search_multi(["产品信息", "公司文档"], query, top_k=3, mode="hybrid_rerank")
+            if results:
+                chunks = [r["chunk"][:500] for r in results]
+                row["knowledge_context"] = "\n---\n".join(chunks)
+                logger.debug("KB context for %s: %d chunks", cn[:20], len(chunks))
+        except Exception as e:
+            logger.debug("知识库检索失败 for %s: %s", cn[:20], e)
 
 
 def _get_today_send_count(db) -> int:
@@ -133,14 +170,22 @@ def send_emails_job(
 
     emails = json.loads(emails_path.read_text(encoding="utf-8"))
 
-    # Filter: skip already-sent and skipped
+    # Filter: only send confirmed emails (skip draft, already-sent, skipped)
     to_send = []
     for e in emails:
         if e.get("skip"):
             continue
         if e.get("send_success"):
             continue
-        if selected_ids is not None and e.get("customer_id") not in selected_ids:
+        cid = e.get("customer_id")
+        if selected_ids is not None and cid not in selected_ids:
+            continue
+        # Verify the email is confirmed in DB
+        row = db.execute(
+            "SELECT email_status FROM customer WHERE id=?", (cid,)
+        ).fetchone()
+        if not row or row["email_status"] not in ("confirmed", "generated"):
+            # "generated" for backward compatibility with pre-draft emails
             continue
         to_send.append(e)
 

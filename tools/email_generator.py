@@ -48,6 +48,7 @@ def build_email_messages(
     from_name: str = "销售团队",
     from_company: str = "",
     language: str = "zh",
+    knowledge_context: str = "",
 ) -> list[dict[str, str]]:
     """Build messages for DeepSeek email generation."""
 
@@ -67,6 +68,8 @@ def build_email_messages(
     ]
     if notes:
         user_lines.append(f"备注：{notes}")
+    if knowledge_context.strip():
+        user_lines.append(f"\n【相关知识库内容，请在邮件中自然地融入以下产品卖点和公司优势】\n{knowledge_context.strip()}")
 
     user_prompt = "\n".join(user_lines)
 
@@ -93,6 +96,7 @@ def generate_single_email(
     from_name: str = "销售团队",
     from_company: str = "",
     language: str = "zh",
+    knowledge_context: str = "",
     model: str | None = None,
 ) -> dict[str, Any]:
     """Generate a single inquiry email via DeepSeek."""
@@ -121,6 +125,7 @@ def generate_single_email(
         from_name=from_name,
         from_company=from_company,
         language=language,
+        knowledge_context=knowledge_context,
     )
 
     try:
@@ -175,6 +180,7 @@ def generate_emails_batch(
             from_name=from_name,
             from_company=from_company,
             language=language,
+            knowledge_context=str(row.get("knowledge_context", "")),
             model=model,
         )
 

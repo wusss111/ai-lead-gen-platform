@@ -1,16 +1,22 @@
-# PRD：外贸客户初筛评估流水线（CLI / Excel）
+# PRD：AI 获客平台 — B2B 外贸智能获客与客户管理
 
-**文档版本**：1.0  
-**状态**：已定稿（实现以本文与 [TECH_ROADMAP.md](./TECH_ROADMAP.md) 为准）  
-**产品定位**：B2B 外贸潜客**初筛助手**——基于公开信息与人工粘贴证据的结构化评分与跟进建议；**不等同**征信、法务或第三方背调报告。
+**文档版本**：2.0
+**状态**：已定稿
+**产品定位**：B2B 外贸客户**初筛→管理→触达**全链路平台。基于 AI 评估、向量知识库、智能客服的一站式解决方案。
 
 ---
 
-## 1. 背景与问题
+## 1. 产品概述
 
-业务侧对潜客重复进行：看官网、判断与我方产品线是否匹配、粗看公开实力与疑点。人工成本高、格式不统一、难批量排序。
+AI 获客平台是一套面向外贸团队的智能获客系统，覆盖从潜客评估、客户管理、询盘邮件到智能客服的完整业务闭环。
 
-**目标**：将上述过程固化为**可批量执行、输入输出均为 Excel、结果可追溯**的流水线，便于按分数与标志筛选跟进优先级。
+**核心能力：**
+
+1. **客户评估** — 上传 Excel 客户表，AI 自动抓取公开信息并打分，批量产出结构化评估结果
+2. **客户资源管理 (CRM)** — 浏览、搜索、筛选、详情查看、导出、AI 自然语言搜索
+3. **询盘邮件** — AI 生成多语言个性化开发信，Gmail API / SMTP 双通道发送，时区感知防风控
+4. **向量知识库** — 产品信息、公司文档、采购表单统一管理，混合检索 + 重排序，服务所有 Agent
+5. **智能客服** — 右下角聊天挂件，RAG 问答 + Function Calling 执行平台操作，流式 + 思维链
 
 ---
 
@@ -18,114 +24,121 @@
 
 | 角色 | 诉求 |
 |------|------|
-| 外贸业务 / 运营 | 导入客户表，得到同结构结果表，按列筛选、分配跟进 |
-| 管理者（可选） | 抽查依据列与缓存，核对高分或标红行 |
+| 外贸业务员 | 批量筛选潜客、生成个性化开发信、搜索产品资料 |
+| 外贸运营/管理者 | 查看客户评分排序、分配跟进、抽查评估质量 |
+| IT 运维 | 管理知识库文档、监控任务状态 |
 
-**典型场景**
+**典型场景：**
 
-1. 首次跑批：`company_name` + `website` 等 → 自动抓取 → DeepSeek 出结构化结果。  
-2. 抓取失败或证据不足：在 **`evidence_paste`** 粘贴摘录后**重跑**该行或整表。  
-3. 产品目录变更：重新生成 `catalog.json`（及版本号），再跑评估以保证与我方报价一致。
-
----
-
-## 3. 范围（MVP）
-
-### 3.1 本期必做（In Scope）
-
-- **本地 CLI**：读入 `.xlsx`，写出 `.xlsx`（可指定输出路径）。  
-- **输入列**（见第 5 节）：含可选 **`evidence_paste`**。  
-- **采集**：对 `website` 尝试常见路径；超时/重试；正文抽取；**本地磁盘缓存**（便于复核）。  
-- **证据合并**：抓取正文 +（若存在）`evidence_paste`（标注为人工粘贴）；仅粘贴无抓取时仍允许评估，并在输出中体现数据来源与质量。  
-- **大模型**：**DeepSeek**（OpenAI 兼容 API），输出**严格 JSON**（schema 见仓库 `schemas/` 与实现侧校验）。  
-- **程序侧**：加权综合分、人工复核标志、Excel 列写入（含可选第二 Sheet 或长 JSON 列策略，见技术路线）。  
-- **我方侧**：版本化产品目录（`catalog.json`）+ 版本化 **`product_kb`** 摘要进提示词。
-
-### 3.2 本期不做（Out of Scope）
-
-- Web 上传界面、多租户、登录。  
-- **自动**搜索降级（Bing/Google/DuckDuckGo 等）：失败仅 `errors` + 低 `data_quality`，依赖 **`evidence_paste`** 补证。  
-- 等同征信/司法尽调的承诺或对外产品表述。
-
-### 3.3 后续可选（Backlog，不在 MVP 验收内）
-
-- FastAPI + 队列、定时任务。  
-- 可选「抓取失败则调用商业搜索 API」。  
-- Playwright 等对强 JS 站点的增强抓取策略。
+1. 展会拿到 100 个客户名单 → 上传 Excel → AI 自动评估打分 → 按分数筛选高意向客户
+2. 筛选出德系客户 → 选中生成询盘邮件 → AI 结合知识库产品信息生成德文邮件 → 确认后发送
+3. 新业务员问「我们的万用表有什么认证」→ 客服从知识库检索「公司文档」回答
+4. 想给某客户发邮件 → 直接在客服输入「帮我给 XX 公司生成询盘邮件」→ Agent 自动调用工具完成
 
 ---
 
-## 4. 成功指标（验收）
+## 3. 功能模块
 
-1. 给定符合列模板的输入表（含 10 行样例），CLI 在无密钥错误配置下能**完整跑通**并生成输出表。  
-2. 每行输出包含：`product_fit_score`、`capability_score`、`reputation_safety_score`（或等价字段）、`deal_recommendation`、`next_action`、`confidence`、`data_quality`、`fetched_pages`、`errors`、`overall_score_computed`、`manual_review_flag`，以及理由/信号类短文本列（或 JSON 子结构展开）。  
-3. **`citations`**（或等价结构）：关键判断带来源 URL 与片段；无来源时允许空 URL 但须降低置信度并在文案中体现。  
-4. 抓取失败时：`errors` 非空，`data_quality` 为 `low`（或规则定义的档位）；填入 **`evidence_paste`** 后重跑，模型输入中**必须**包含该粘贴块。  
-5. 综合分 **`overall_score_computed`** 由程序按文档约定权重计算，**不由模型单独拍板**为最终对外分（模型可辅助子维度，最终以程序公式为准）。  
-6. **`manual_review_flag`**：满足约定规则之一时为「需复核」（实现可用列值 + 条件格式标红）。
+### 3.1 Agent 1：客户评估 (customer_eval)
 
----
+- 上传 Excel 文件 → RQ 后台异步评估
+- AI 抓取客户网站（首页/about/products/contact），提取文本证据
+- DeepSeek 输出结构化 JSON：产品匹配度、实力评估、信誉风险、买卖方角色、跟进建议
+- 加权计算综合评分，自动标记需人工复核的行
+- 进度实时轮询，支持分批继续、暂停、取消
+- 评估结果写入 SQLite `customer` 表，直接可被 CRM 和邮件模块使用
 
-## 5. 数据需求：Excel 列
+**优化特性：**
+- 支持 `evidence_paste` 人工粘贴列补证
+- 支持 CSV 输入 + URL 列表评估
+- 智能列名匹配（中英文 50+ 别名自动映射）
 
-### 5.1 输入（建议列名，实现可兼容大小写映射）
+### 3.2 Agent 2：客户资源管理 (CRM)
 
-| 列名 | 必填 | 说明 |
-|------|------|------|
-| `company_name` | 是 | 公司名 |
-| `website` | 否 | 官网 URL；多个用分号或换行分隔 |
-| `country_region` | 否 | 国家/地区 |
-| `target_products` | 否 | 希望对齐的产品线或关键词 |
-| `priority` | 否 | 高/中/低；程序可原样回写 |
-| `notes` | 否 | 内部备注 |
-| `evidence_paste` | 否 | 人工粘贴摘录；抓取弱/失败时用于补证与重跑 |
+- 客户列表（分页、排序、搜索、筛选）
+- 高级筛选：评分范围、国家、推荐等级、复核状态、批次、负责人
+- 客户详情页（评估结果、评分明细、邮件状态）
+- AI 自然语言搜索（Text-to-SQL）
+- 导出到 Excel / CSV
+- 批量分配销售负责人
 
-### 5.2 输出（在输入列基础上追加，名称以实现 `schemas/excel_io.json` 为准）
+### 3.3 Agent 3：询盘邮件 (inquiry_mail)
 
-- 契合度：分数 + 理由（短句或可拼接）  
-- 实力：`capability_score` + `capability_signals`  
-- 信誉：`reputation_*` 展开列 + `reputation_safety_score`  
-- 跟进：`deal_recommendation`、`next_action`  
-- 质量与调试：`confidence`、`data_quality`、`fetched_pages`、`search_fallback_used`（MVP 固定为 `no` 或等价）、`errors`  
-- 决策支持：`overall_score_computed`、`manual_review_flag`  
-- 审计：`eval_json`（整行 JSON 字符串）或第二 Sheet `Detail` 存全文  
+- 从 CRM 客户列表选择收件人（支持搜索/筛选）
+- AI 生成多语言个性化邮件（结合知识库产品信息）
+- 支持草稿 → 确认 → 发送流程
+- **双通道发送**：Gmail API (OAuth2, 端口 443) 优先，SMTP 回退
+- **反风控机制**：发送间隔 (45s)、每日限额 (50封)、时区感知 (仅当地 9-17 点)
+- 邮件追踪（像素追踪 + 已读状态）
+- 在线编辑邮件内容
 
-**主表原则**：列宽可控、便于筛选；长文本优先第二 Sheet 或 `eval_json`。
+### 3.4 Agent 4：知识库管理 (knowledge_base)
 
----
+- 三大集合：产品信息、公司文档、采购表单
+- 支持格式：PDF (pdfplumber)、图片 (OCR + DeepSeek 清理)、DOCX、XLSX、TXT/MD
+- JSON 格式化入库（XLSX 报价表→结构化文本）
+- CLI 批量导入 + Web 目录路径导入 + 文本粘贴入库
+- 预览、搜索测试、删除管理
+- **检索优化**：Query 改写 → BM25+语义混合检索 → RRF 融合 → DeepSeek 重排序
 
-## 6. 业务规则摘要
+### 3.5 Agent 5：智能客服 (chat_agent)
 
-- **加权公式（默认，可配置）**：  
-  `overall_score_computed = w_pf * product_fit_score + w_cap * capability_score + w_rep * reputation_safety_score`  
-  其中 `w_pf=0.45`，`w_cap=0.25`，`w_rep=0.30`；各子分均为 1–5。  
-- **人工复核标志（默认规则，可配置）**：例如  
-  - `overall_score_computed >= 4.0`，或  
-  - `reputation_safety_score <= 2`，或  
-  - `reputation_concerns` 命中关键词列表（中英文可配置）  
-  满足其一则 `manual_review_flag = YES`（或等价枚举）。  
-- **合规**：遵守 `robots.txt` 与合理请求频率；最小化存储；不向用户承诺背调法律效力。
-
----
-
-## 7. 非功能需求
-
-- **可维护性**：配置（权重、阈值、路径）与代码分离（如 `config` 或环境变量）。  
-- **可观测**：每行 `errors` 可读；日志包含行号与公司名（避免打印完整 API 密钥）。  
-- **失败容忍**：单行 LLM 或抓取失败不应阻塞整表（可配置「遇错即停」为可选）。
+- 右下角浮动气泡 + 380×520px 面板，所有页面可见
+- RAG 问答：自动从知识库检索相关内容
+- **Function Calling** — 5 个工具：搜索知识库、搜索客户、客户详情、生成邮件、邮件状态
+- **流式输出** + 思维链可视化（DeepSeek V4 reasoning_content）
+- 写操作（发邮件）需用户确认卡片
+- 跨页面上下文保持（localStorage）
+- 智能上下文管理（历史>6000字自动摘要压缩）
 
 ---
 
-## 8. 文档关系
+## 4. 系统能力（非功能需求）
 
-- 技术选型、目录结构、迭代顺序见 **[TECH_ROADMAP.md](./TECH_ROADMAP.md)**。  
-- Cursor 侧总体规划见 `.cursor/plans` 内外贸客户评估 Agent 计划；**实现以本 PRD 与技术路线为优先**。  
-- 在 Cursor 中后续改本仓库流水线时，可 **@ 引用技能** `trade-customer-excel-pipeline`（项目技能路径：`.cursor/skills/trade-customer-excel-pipeline/SKILL.md`），以便自动带上文约束与检查清单。
+### 4.1 平台基础设施
+
+- **Agent 自动发现**：新 Agent 只需创建目录 + manifest.py + routes.py，无需修改核心代码
+- **配置管理**：环境变量 + dataclass 配置类
+- **认证**：HTTP Basic（可选，开发环境可关闭）
+- **全局任务追踪**：导航栏实时显示后台任务进度（跨页面）
+- **暗色/亮色主题**：主题偏好 localStorage 持久化
+
+### 4.2 可维护性
+
+- 配置与代码分离（环境变量）
+- 模块化 ES Modules（零构建步骤）
+- 单例模式管理 DB 连接、Embedding 模型、Redis 客户端
+
+### 4.3 安全与隐私
+
+- API 密钥通过 `.env` 管理（gitignore）
+- 无硬编码凭证
+- 用户数据本地存储（SQLite）
+- 邮件发送配额与间隔控制
 
 ---
 
-## 9. 修订记录
+## 5. 技术约束
+
+- **运行环境**：Windows 10+ / Docker (Linux)
+- **Python**：3.11+
+- **不需要 GPU**（嵌入模型使用 ONNX Runtime CPU 推理）
+- **不需要额外数据库服务**（SQLite + ChromaDB 均为本地文件）
+- **Redis 仅用于 RQ 任务队列**（Redis 5.x Windows 版 或 Docker Redis 7）
+
+---
+
+## 6. 文档关系
+
+- 技术栈与分阶段交付见 **[TECH_ROADMAP.md](./TECH_ROADMAP.md)**
+- 底层框架与工作流编排见 **[ARCHITECTURE.md](./ARCHITECTURE.md)**
+- 开发上手见 **[CLAUDE.md](../CLAUDE.md)**
+
+---
+
+## 7. 修订记录
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
-| 1.0 | 2026-05-07 | 首版：CLI、DeepSeek、`evidence_paste`、无自动搜索降级 |
+| 1.0 | 2026-05-07 | 首版：CLI、DeepSeek、evidence_paste |
+| 2.0 | 2026-05-19 | 加入 CRM、询盘邮件、知识库、智能客服，完整平台化 |
