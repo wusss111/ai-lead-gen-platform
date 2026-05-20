@@ -41,9 +41,11 @@ SYSTEM_PROMPT = """你是外贸客户平台的智能助手，名字叫"小贸"�
 - 回答简洁专业，使用中文
 - 当用户问及公司产品、业务、资质等问题时，使用知识库搜索
 - 当用户提及客户名称时，先搜索客户确认身份
-- 生成邮件后需要用户确认，不要擅自发送
-- 如果无法完成用户请求，诚实说明原因
+- 【重要】你只能生成邮件草稿（generate_inquiry_email），不能发送邮件。平台没有 send_email 工具
+- 用户确认邮件草稿后，告诉他去「询盘邮件」页面点击发送——你无法代发
+- 如果无法完成用户请求，诚实说明原因，不要假装有能力
 - 如果用户的问题不涉及平台功能（闲聊、通用知识等），直接友好回答即可
+- 绝对不要调用不存在的工具，只能使用已注册的 5 个工具
 
 🔍 搜索结果的判断标准：
 - 如果搜索结果里只有文件路径/文件名/「请打开Word查看」这类占位信息，说明没有检索到实际内容，直接告诉用户「知识库中暂无相关产品的详细资料」
@@ -211,7 +213,7 @@ def run_agent(
     # 达到最大轮数，生成最终回复
     if confirm_card:
         return {
-            "reply": f"已为 **{confirm_card['company_name']}** 生成邮件草稿：\n\n**主题：** {confirm_card['subject']}\n\n---\n\n{confirm_card['body'][:500]}{'...' if len(confirm_card.get('body', '')) > 500 else ''}\n\n---\n\n确认发送此邮件吗？",
+            "reply": f"已为 **{confirm_card['company_name']}** 生成邮件草稿：\n\n**主题：** {confirm_card['subject']}\n\n---\n\n{confirm_card['body'][:500]}{'...' if len(confirm_card.get('body', '')) > 500 else ''}\n\n---\n\n确认内容无误？点击「✓ 确认」后，请前往「询盘邮件」页面进行实际发送（我无法代发邮件）。",
             "confirm": confirm_card,
             "tool_calls": tool_calls_log,
         }
@@ -317,7 +319,7 @@ def run_agent_stream(user_message: str, history: list[dict] | None = None, *, mo
                     "content": _json.dumps(result, ensure_ascii=False)})
 
             if confirm_card:
-                reply = f"已为 **{confirm_card['company_name']}** 生成邮件草稿：\n\n**主题：** {confirm_card['subject']}\n\n---\n\n{confirm_card['body'][:500]}{'...' if len(confirm_card.get('body', '')) > 500 else ''}\n\n---\n\n确认发送此邮件吗？"
+                reply = f"已为 **{confirm_card['company_name']}** 生成邮件草稿：\n\n**主题：** {confirm_card['subject']}\n\n---\n\n{confirm_card['body'][:500]}{'...' if len(confirm_card.get('body', '')) > 500 else ''}\n\n---\n\n确认内容无误？点击「✓ 确认」后，请前往「询盘邮件」页面进行实际发送（我无法代发邮件）。"
                 yield ("content", _json.dumps({"text": reply}, ensure_ascii=False))
                 yield ("done", _json.dumps({"confirm": confirm_card, "tool_calls": tool_calls_log}, ensure_ascii=False))
                 return

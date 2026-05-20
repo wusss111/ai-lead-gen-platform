@@ -125,13 +125,14 @@ function handleEvent(msgId, type, data) {
     if (!el) {
       el = document.createElement('div');
       el.className = 'chat-thinking';
-      el.innerHTML = '<div class="chat-thinking-header">🧠 思考中… <span class="chat-thinking-toggle" onclick="this.parentElement.nextElementSibling.classList.toggle(\'hidden\')">收起</span></div><div class="chat-thinking-body"></div>';
+      el.innerHTML = '<div class="chat-thinking-header" onclick="this.parentElement.classList.toggle(\'hidden\')">🧠 思考中… <span class="chat-thinking-toggle"></span></div><div class="chat-thinking-body"></div>';
       bubble.insertBefore(el, bubble.querySelector('.chat-content'));
     }
     const body = el.querySelector('.chat-thinking-body');
     if (body) {
       body.textContent += data.text || '';
-      body.parentElement.classList.remove('hidden');
+      const header = el.querySelector('.chat-thinking-header');
+      if (header) header.childNodes[0].textContent = '🧠 思考中… (' + body.textContent.length + '字) ';
     }
     scrollToBottom();
   } else if (type === 'content') {
@@ -223,7 +224,7 @@ function createStreamingBubble() {
     '<div class="chat-msg-bubble">' +
       '<div class="chat-tools"></div>' +
       '<div class="chat-thinking hidden">' +
-        '<div class="chat-thinking-header">🧠 思考中… <span class="chat-thinking-toggle" onclick="this.parentElement.nextElementSibling.classList.toggle(\'hidden\')">收起</span></div>' +
+        '<div class="chat-thinking-header" onclick="this.parentElement.classList.toggle(\'hidden\')">🧠 思考中… <span class="chat-thinking-toggle"></span></div>' +
         '<div class="chat-thinking-body"></div>' +
       '</div>' +
       '<div class="chat-content"><div class="chat-typing"><span></span><span></span><span></span></div></div>' +
@@ -241,8 +242,9 @@ function finishStreaming(msgId, content, thinking, confirm) {
   if (!thinking && bubble.querySelector('.chat-thinking')) {
     bubble.querySelector('.chat-thinking').remove();
   } else if (thinking) {
-    const header = bubble.querySelector('.chat-thinking-header');
-    if (header) header.innerHTML = '🧠 思考过程 <span class="chat-thinking-toggle" onclick="this.parentElement.nextElementSibling.classList.toggle(\'hidden\')">收起</span>';
+    const body = bubble.querySelector(".chat-thinking-body");
+    const header = bubble.querySelector(".chat-thinking-header");
+    if (header && body) header.childNodes[0].textContent = "🧠 思考过程 (" + body.textContent.length + "字) ";
   }
 
   // 确保内容可见

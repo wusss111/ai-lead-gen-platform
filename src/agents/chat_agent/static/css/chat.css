@@ -117,20 +117,23 @@
 .chat-msg-bubble ul { margin: 6px 0; padding-left: 18px; }
 .chat-msg-bubble li { margin-bottom: 2px; }
 
-/* 思维链 */
+/* 思维链 — 默认折叠，点击标题展开 */
 .chat-thinking {
   margin-bottom: 8px; border-radius: 8px;
   background: rgba(245,158,11,0.06); border: 1px solid rgba(245,158,11,0.18);
   overflow: hidden;
 }
 .chat-thinking.hidden .chat-thinking-body { display: none; }
+.chat-thinking.hidden .chat-thinking-toggle::after { content: '▶ 展开'; }
+.chat-thinking:not(.hidden) .chat-thinking-toggle::after { content: '▼ 收起'; }
 .chat-thinking-header {
   padding: 6px 10px; font-size: 0.74rem; color: #f59e0b;
   display: flex; justify-content: space-between; align-items: center;
-  cursor: default; user-select: none;
+  cursor: pointer; user-select: none;
 }
-.chat-thinking-toggle { cursor: pointer; font-size: 0.7rem; color: rgba(255,255,255,0.35); }
-.chat-thinking-toggle:hover { color: rgba(255,255,255,0.6); }
+.chat-thinking-header:hover { background: rgba(245,158,11,0.06); }
+.chat-thinking-toggle { font-size: 0.7rem; color: rgba(255,255,255,0.4); }
+.chat-thinking-toggle:hover { color: rgba(255,255,255,0.7); }
 .chat-thinking-body {
   padding: 8px 10px; font-size: 0.76rem; color: rgba(255,255,255,0.5);
   line-height: 1.55; white-space: pre-wrap; max-height: 200px; overflow-y: auto;
