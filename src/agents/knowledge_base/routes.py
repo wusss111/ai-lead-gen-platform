@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Knowledge base API and page routes."""
 
 from __future__ import annotations
@@ -45,7 +46,7 @@ def kb_page(request: Request):
 def list_collections(
     _: Annotated[None, Depends(require_auth)],
 ) -> JSONResponse:
-    """列出所有知识库 collection 及统计。"""
+    """列出所有知识库 collection 及统计."""
     from tools.vector_store import get_collections, get_collection_stats
 
     result = []
@@ -64,7 +65,7 @@ def list_documents(
     _: Annotated[None, Depends(require_auth)],
     collection: str = "",
 ) -> JSONResponse:
-    """列出文档列表。collection 为空时列出所有。"""
+    """列出文档列表.collection 为空时列出所有."""
     from tools.vector_store import list_documents
 
     if collection:
@@ -83,7 +84,7 @@ def delete_document(
     _: Annotated[None, Depends(require_auth)],
     collection: str = "",
 ) -> JSONResponse:
-    """删除文档及其所有 chunk。"""
+    """删除文档及其所有 chunk."""
     from tools.vector_store import delete_document
 
     if not collection:
@@ -103,7 +104,7 @@ def preview_document(
     _: Annotated[None, Depends(require_auth)],
     collection: str = "产品信息",
 ) -> JSONResponse:
-    """获取文档的原始文本预览（取第一个父文档的前 2000 字）。"""
+    """获取文档的原始文本预览(取第一个父文档的前 2000 字)."""
     from tools.vector_store import list_documents, get_parent_chunk, _get_client, _get_or_create, _safe_name
 
     client = _get_client()
@@ -137,7 +138,7 @@ def import_directory(
     collection: str = Form("产品信息"),
     ocr_cleanup: str = Form("1"),
 ) -> JSONResponse:
-    """从目录路径导入文档，每个文件一个 RQ job。"""
+    """从目录路径导入文档,每个文件一个 RQ job."""
     from pathlib import Path
     from src.core.redis_utils import get_queue
     from src.agents.knowledge_base.tasks import process_file_job
@@ -185,7 +186,7 @@ def import_directory(
         "collection": collection,
         "file_count": len(jobs),
         "jobs": jobs,
-        "message": f"已入队 {len(jobs)} 个文件，请启动 worker: rq worker -u {config.redis_url} knowledge_base:default --worker-class rq.SimpleWorker",
+        "message": f"已入队 {len(jobs)} 个文件,请启动 worker: rq worker -u {config.redis_url} knowledge_base:default --worker-class rq.SimpleWorker",
     })
 
 
@@ -197,7 +198,7 @@ def ingest_text(
     title: str = Form(""),
     collection: str = Form("产品信息"),
 ) -> JSONResponse:
-    """文本粘贴入库。"""
+    """文本粘贴入库."""
     if not text.strip():
         return JSONResponse({"status": "error", "error": "文本内容为空"}, status_code=400)
 
@@ -242,7 +243,7 @@ def search_knowledge(
     mode: str = "hybrid_rerank",
     top_k: int = 5,
 ) -> JSONResponse:
-    """检索知识库。支持三种模式：vector / hybrid / hybrid_rerank"""
+    """检索知识库.支持三种模式:vector / hybrid / hybrid_rerank"""
     from tools.vector_store import search, search_multi
 
     if not query.strip():
@@ -283,7 +284,7 @@ def get_job_status(
     _: Annotated[None, Depends(require_auth)],
     config: Annotated[PlatformConfig, Depends(get_config)],
 ) -> JSONResponse:
-    """查询文档处理 job 状态。"""
+    """查询文档处理 job 状态."""
     from src.core.redis_utils import get_rq_job_info
     from rq.job import Job
     from redis import Redis

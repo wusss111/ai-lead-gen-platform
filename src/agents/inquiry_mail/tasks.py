@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """RQ tasks for email generation and sending."""
 
 from __future__ import annotations
@@ -54,7 +55,7 @@ def generate_emails_job(
     if not rows:
         return {"generated": 0, "skipped": 0, "emails": []}
 
-    # 检索知识库：为每个客户注入产品/公司知识
+    # 检索知识库:为每个客户注入产品/公司知识
     _inject_knowledge_context(rows)
 
     def rq_progress(payload: dict[str, Any]) -> None:
@@ -105,11 +106,11 @@ def generate_emails_job(
 
 
 def _inject_knowledge_context(rows: list[dict]) -> None:
-    """为每行客户数据注入知识库检索结果（原地修改 rows）。"""
+    """为每行客户数据注入知识库检索结果(原地修改 rows)."""
     try:
         from tools.vector_store import search_multi
     except Exception:
-        logger.warning("无法导入 vector_store，跳过知识库检索")
+        logger.warning("无法导入 vector_store,跳过知识库检索")
         return
 
     for row in rows:
@@ -166,7 +167,7 @@ def send_emails_job(
     emails_path = mail_dir / "emails.json"
 
     if not emails_path.is_file():
-        # Fallback: 客服 Agent 直接在 DB 中生成邮件，没有 emails.json
+        # Fallback: 客服 Agent 直接在 DB 中生成邮件,没有 emails.json
         # 直接从 DB 查 confirmed 状态的邮件来发送
         logger.info("No emails.json found, falling back to DB for confirmed emails")
         db = get_db()

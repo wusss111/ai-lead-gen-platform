@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """CRM API and page routes."""
 
 from __future__ import annotations
@@ -315,17 +316,17 @@ Rules:
     explanation = result.get("explanation", "")
 
     if not sql:
-        raise HTTPException(400, "AI 未能生成有效查询，请换个说法试试")
+        raise HTTPException(400, "AI 未能生成有效查询,请换个说法试试")
 
     # Safety: only allow SELECT
     sql_upper = sql.upper().replace("\n", " ").replace("\r", " ")
     if not sql_upper.startswith("SELECT"):
         logger.warning("Smart search blocked non-SELECT: %s", sql[:120])
-        raise HTTPException(400, "AI 生成的查询不安全，已被拦截。请换个说法试试。")
+        raise HTTPException(400, "AI 生成的查询不安全,已被拦截.请换个说法试试.")
     for keyword in ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER", "CREATE", "EXEC", "ATTACH"]:
         if keyword in sql_upper:
             logger.warning("Smart search blocked for keyword %s: %s", keyword, sql[:120])
-            raise HTTPException(400, f"查询包含禁止操作 ({keyword})，已被拦截")
+            raise HTTPException(400, f"查询包含禁止操作 ({keyword}),已被拦截")
 
     try:
         db = get_db()

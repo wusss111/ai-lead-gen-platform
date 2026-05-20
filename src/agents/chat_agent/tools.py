@@ -1,4 +1,5 @@
-"""Agent 工具定义 + 执行函数。"""
+# -*- coding: utf-8 -*-
+"""Agent 工具定义 + 执行函数."""
 
 from __future__ import annotations
 
@@ -8,24 +9,24 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# DeepSeek Function Calling 工具定义（OpenAI 兼容格式）
+# DeepSeek Function Calling 工具定义(OpenAI 兼容格式)
 TOOL_DEFINITIONS = [
     {
         "type": "function",
         "function": {
             "name": "search_knowledge_base",
-            "description": "search_knowledge_base：搜索知识库。参数query(搜索词,必填)和collection(可选,限定产品信息/公司文档/采购表单)。",
+            "description": "search_knowledge_base:搜索知识库.参数query(搜索词,必填)和collection(可选,限定产品信息/公司文档/采购表单).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "query": {
                         "type": "string",
-                        "description": "搜索查询词，建议使用关键词而非完整句子",
+                        "description": "搜索查询词,建议使用关键词而非完整句子",
                     },
                     "collection": {
                         "type": "string",
                         "enum": ["产品信息", "公司文档", "采购表单"],
-                        "description": "限定搜索的知识库分类，不传则搜索全部",
+                        "description": "限定搜索的知识库分类,不传则搜索全部",
                     },
                 },
                 "required": ["query"],
@@ -36,7 +37,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "search_customers",
-            "description": "search_customers：搜索CRM客户库。参数query(公司名或邮箱关键词,必填)。返回匹配客户的基本信息和评分。",
+            "description": "search_customers:搜索CRM客户库.参数query(公司名或邮箱关键词,必填).返回匹配客户的基本信息和评分.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -53,13 +54,13 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_customer_detail",
-            "description": "get_customer_detail：获取客户完整信息。参数customer_id(整数,必填)。返回评估结果、评分、跟进建议等全部字段。",
+            "description": "get_customer_detail:获取客户完整信息.参数customer_id(整数,必填).返回评估结果、评分、跟进建议等全部字段.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "customer_id": {
                         "type": "integer",
-                        "description": "客户ID（整数,必填）",
+                        "description": "客户ID(整数,必填)",
                     },
                 },
                 "required": ["customer_id"],
@@ -70,7 +71,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "generate_inquiry_email",
-            "description": "generate_inquiry_email：生成询盘邮件草稿（不是发送！）。参数customer_id(整数,必填)和language(可选,auto/zh/en)。生成后需用户确认。",
+            "description": "generate_inquiry_email:生成询盘邮件草稿(不是发送!).参数customer_id(整数,必填)和language(可选,auto/zh/en).生成后需用户确认.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -81,7 +82,7 @@ TOOL_DEFINITIONS = [
                     "language": {
                         "type": "string",
                         "enum": ["auto", "zh", "en"],
-                        "description": "邮件语言：auto(自动检测)/zh(中文)/en(英文)，默认auto",
+                        "description": "邮件语言:auto(自动检测)/zh(中文)/en(英文),默认auto",
                     },
                 },
                 "required": ["customer_id"],
@@ -92,13 +93,13 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "list_email_status",
-            "description": "list_email_status：查询邮件发送状态和阅读状态。参数customer_id(整数,可选,不传则列出所有)。这是唯一的邮件状态查询函数，不要使用view_email_status、check_email等其他名称。",
+            "description": "list_email_status:查询邮件发送状态和阅读状态.参数customer_id(整数,可选,不传则列出所有).这是唯一的邮件状态查询函数,不要使用view_email_status、check_email等其他名称.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "customer_id": {
                         "type": "integer",
-                        "description": "客户ID（可选，不传则列出所有有邮件记录的客户）",
+                        "description": "客户ID(可选,不传则列出所有有邮件记录的客户)",
                     },
                 },
                 "required": [],
@@ -109,11 +110,11 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "smart_search_customers",
-            "description": "smart_search_customers：AI 自然语言搜索客户。参数q(自然语言描述,必填)。例如'德国的高分客户'、'最近一周导入的客户'。",
+            "description": "smart_search_customers:AI 自然语言搜索客户.参数q(自然语言描述,必填).例如'德国的高分客户'、'最近一周导入的客户'.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "q": {"type": "string", "description": "自然语言查询，描述你想找什么样的客户"},
+                    "q": {"type": "string", "description": "自然语言查询,描述你想找什么样的客户"},
                 },
                 "required": ["q"],
             },
@@ -123,7 +124,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "list_salespersons",
-            "description": "list_salespersons：列出所有销售负责人及其名下客户数量。无参数。",
+            "description": "list_salespersons:列出所有销售负责人及其名下客户数量.无参数.",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -131,12 +132,12 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "assign_customer",
-            "description": "assign_customer：将客户分配给销售负责人。参数customer_id(客户ID,必填)和salesperson_id(销售ID,必填,传0表示取消分配)。需用户确认。",
+            "description": "assign_customer:将客户分配给销售负责人.参数customer_id(客户ID,必填)和salesperson_id(销售ID,必填,传0表示取消分配).需用户确认.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "customer_id": {"type": "integer", "description": "客户ID"},
-                    "salesperson_id": {"type": "integer", "description": "销售负责人ID，传0表示取消分配"},
+                    "salesperson_id": {"type": "integer", "description": "销售负责人ID,传0表示取消分配"},
                 },
                 "required": ["customer_id", "salesperson_id"],
             },
@@ -146,11 +147,11 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "export_customers",
-            "description": "export_customers：导出客户数据。参数deal_recommendation(可选)和batch_id(可选)用于筛选。返回客户列表JSON。",
+            "description": "export_customers:导出客户数据.参数deal_recommendation(可选)和batch_id(可选)用于筛选.返回客户列表JSON.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "deal_recommendation": {"type": "string", "description": "筛选推荐等级：high_intent/watch/no"},
+                    "deal_recommendation": {"type": "string", "description": "筛选推荐等级:high_intent/watch/no"},
                     "batch_id": {"type": "string", "description": "筛选批次ID"},
                 },
                 "required": [],
@@ -161,12 +162,12 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "list_emailable_customers",
-            "description": "list_emailable_customers：列出可发送邮件的客户（有邮箱且未发送过的）。参数search(可选,搜索公司名)、email_status(可选,按邮件状态筛选)。",
+            "description": "list_emailable_customers:列出可发送邮件的客户(有邮箱且未发送过的).参数search(可选,搜索公司名)、email_status(可选,按邮件状态筛选).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "search": {"type": "string", "description": "搜索关键词"},
-                    "email_status": {"type": "string", "description": "邮件状态筛选：draft/confirmed/sent/failed"},
+                    "email_status": {"type": "string", "description": "邮件状态筛选:draft/confirmed/sent/failed"},
                 },
                 "required": [],
             },
@@ -176,7 +177,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "update_email_draft",
-            "description": "update_email_draft：编辑客户的邮件草稿（主题或正文）。只能修改未发送的邮件。参数customer_id(必填)、subject(可选)、body(可选)。需用户确认。",
+            "description": "update_email_draft:编辑客户的邮件草稿(主题或正文).只能修改未发送的邮件.参数customer_id(必填)、subject(可选)、body(可选).需用户确认.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -192,11 +193,11 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "check_job_status",
-            "description": "check_job_status：查询客户评估任务的进度和状态。参数job_id(任务ID,必填)。",
+            "description": "check_job_status:查询客户评估任务的进度和状态.参数job_id(任务ID,必填).",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "job_id": {"type": "string", "description": "评估任务ID（UUID格式）"},
+                    "job_id": {"type": "string", "description": "评估任务ID(UUID格式)"},
                 },
                 "required": ["job_id"],
             },
@@ -206,7 +207,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "list_kb_collections",
-            "description": "list_kb_collections：查看知识库概况，包括三个集合（产品信息/公司文档/采购表单）各自的文档数和数据块数。无参数。",
+            "description": "list_kb_collections:查看知识库概况,包括三个集合(产品信息/公司文档/采购表单)各自的文档数和数据块数.无参数.",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -216,7 +217,7 @@ TOOL_DEFINITIONS = [
 
 
 def execute_search_knowledge_base(args: dict) -> dict:
-    """执行知识库搜索。"""
+    """执行知识库搜索."""
     from tools.vector_store import search, search_multi
 
     query = args.get("query", "")
@@ -243,7 +244,7 @@ def execute_search_knowledge_base(args: dict) -> dict:
 
 
 def execute_search_customers(args: dict) -> dict:
-    """执行客户搜索。"""
+    """执行客户搜索."""
     from src.core.database import get_db
 
     query = args.get("query", "").strip()
@@ -268,7 +269,7 @@ def execute_search_customers(args: dict) -> dict:
 
 
 def execute_get_customer_detail(args: dict) -> dict:
-    """获取客户详情。"""
+    """获取客户详情."""
     from src.core.database import get_db
 
     cid = args.get("customer_id")
@@ -277,7 +278,7 @@ def execute_get_customer_detail(args: dict) -> dict:
     try:
         cid = int(cid)
     except (ValueError, TypeError):
-        return {"found": False, "message": f"customer_id 必须是整数，实际值: {repr(cid)}"}
+        return {"found": False, "message": f"customer_id 必须是整数,实际值: {repr(cid)}"}
 
     db = get_db()
     row = db.execute(
@@ -294,7 +295,7 @@ def execute_get_customer_detail(args: dict) -> dict:
 
 
 def execute_generate_inquiry_email(args: dict) -> dict:
-    """生成询盘邮件草稿。返回需要用户确认。"""
+    """生成询盘邮件草稿.返回需要用户确认."""
     from src.core.database import get_db
 
     cid = args.get("customer_id")
@@ -305,7 +306,7 @@ def execute_generate_inquiry_email(args: dict) -> dict:
     try:
         cid = int(cid)
     except (ValueError, TypeError):
-        return {"status": "error", "message": f"customer_id 必须是整数，实际值: {repr(cid)}"}
+        return {"status": "error", "message": f"customer_id 必须是整数,实际值: {repr(cid)}"}
 
     db = get_db()
     row = db.execute(
@@ -326,7 +327,7 @@ def execute_generate_inquiry_email(args: dict) -> dict:
         kb_results = search_multi(["产品信息", "公司文档"], product_query, top_k=3, mode="hybrid_rerank")
         kb_context = "\n".join(r["chunk"][:400] for r in kb_results) if kb_results else ""
     except Exception as e:
-        logger.warning("知识库检索失败，跳过: %s", e)
+        logger.warning("知识库检索失败,跳过: %s", e)
 
     # 生成邮件
     from tools.email_generator import generate_single_email
@@ -364,12 +365,12 @@ def execute_generate_inquiry_email(args: dict) -> dict:
         "subject": email.get("subject", ""),
         "body": email.get("body_text", ""),
         "needs_confirm": True,
-        "message": f"邮件草稿已生成。请确认内容后发送。",
+        "message": f"邮件草稿已生成.请确认内容后发送.",
     }
 
 
 def execute_list_email_status(args: dict) -> dict:
-    """查看邮件状态。"""
+    """查看邮件状态."""
     from src.core.database import get_db, dicts_from_rows
 
     db = get_db()
@@ -379,7 +380,7 @@ def execute_list_email_status(args: dict) -> dict:
         try:
             cid = int(cid)
         except (ValueError, TypeError):
-            return {"found": False, "message": f"customer_id 必须是整数，实际值: {repr(cid)}"}
+            return {"found": False, "message": f"customer_id 必须是整数,实际值: {repr(cid)}"}
         row = db.execute(
             "SELECT id, company_name, contact_email, email_status, email_sent_at, "
             "tracking_last_opened_at FROM customer WHERE id=?",
@@ -401,7 +402,7 @@ def execute_list_email_status(args: dict) -> dict:
 # -- 新增工具执行函数 (8个) --
 
 def execute_smart_search_customers(args: dict) -> dict:
-    """AI 自然语言搜索客户。"""
+    """AI 自然语言搜索客户."""
     from src.core.database import get_db, dicts_from_rows
     from tools.deepseek_client import chat_json
 
@@ -410,14 +411,14 @@ def execute_smart_search_customers(args: dict) -> dict:
         return {"found": False, "message": "请提供搜索描述"}
 
     db = get_db()
-    # 构建 schema 提示，让 DeepSeek 生成 SQL
+    # 构建 schema 提示,让 DeepSeek 生成 SQL
     schema_hint = """customer 表列:
 id, company_name, website, country_region, contact_name, contact_email,
 target_products, priority, overall_score_computed, deal_recommendation,
 buyer_seller_role, manual_review_flag, data_quality, email_status, created_at"""
 
     messages = [
-        {"role": "system", "content": f"你是SQL专家。根据用户的自然语言生成一条SELECT语句。只输出JSON: {{\"sql\":\"...\", \"explanation\":\"...\"}}。表结构:{schema_hint}"},
+        {"role": "system", "content": f"你是SQL专家.根据用户的自然语言生成一条SELECT语句.只输出JSON: {{\"sql\":\"...\", \"explanation\":\"...\"}}.表结构:{schema_hint}"},
         {"role": "user", "content": q},
     ]
     resp = chat_json(messages, model=None, temperature=0.1, max_tokens=512)
@@ -440,7 +441,7 @@ buyer_seller_role, manual_review_flag, data_quality, email_status, created_at"""
 
 
 def execute_list_salespersons(args: dict) -> dict:
-    """列出销售负责人。"""
+    """列出销售负责人."""
     from src.core.database import get_db, dicts_from_rows
     db = get_db()
     rows = db.execute(
@@ -452,7 +453,7 @@ def execute_list_salespersons(args: dict) -> dict:
 
 
 def execute_assign_customer(args: dict) -> dict:
-    """分配客户给销售。"""
+    """分配客户给销售."""
     from src.core.database import get_db
     db = get_db()
     cid = args.get("customer_id")
@@ -460,7 +461,7 @@ def execute_assign_customer(args: dict) -> dict:
     if not cid:
         return {"status": "error", "message": "请提供客户ID"}
     if sid is None:
-        return {"status": "error", "message": "请提供销售负责人ID（传0取消分配）"}
+        return {"status": "error", "message": "请提供销售负责人ID(传0取消分配)"}
 
     # 验证客户存在
     row = db.execute("SELECT id, company_name FROM customer WHERE id=?", (int(cid),)).fetchone()
@@ -483,7 +484,7 @@ def execute_assign_customer(args: dict) -> dict:
 
 
 def execute_export_customers(args: dict) -> dict:
-    """导出客户数据。"""
+    """导出客户数据."""
     from src.core.database import get_db, dicts_from_rows
     db = get_db()
     conditions = []
@@ -500,7 +501,7 @@ def execute_export_customers(args: dict) -> dict:
 
 
 def execute_list_emailable_customers(args: dict) -> dict:
-    """列出可发邮件的客户。"""
+    """列出可发邮件的客户."""
     from src.core.database import get_db, dicts_from_rows
     db = get_db()
     conditions = ["contact_email IS NOT NULL", "contact_email != ''"]
@@ -520,7 +521,7 @@ def execute_list_emailable_customers(args: dict) -> dict:
 
 
 def execute_update_email_draft(args: dict) -> dict:
-    """编辑邮件草稿。"""
+    """编辑邮件草稿."""
     from src.core.database import get_db
     db = get_db()
     cid = args.get("customer_id")
@@ -533,7 +534,7 @@ def execute_update_email_draft(args: dict) -> dict:
     if not row:
         return {"status": "error", "message": f"客户ID {cid} 不存在"}
     if row["email_status"] in ("sent", None):
-        return {"status": "error", "message": f"只能编辑草稿状态的邮件，当前状态: {row['email_status']}"}
+        return {"status": "error", "message": f"只能编辑草稿状态的邮件,当前状态: {row['email_status']}"}
 
     updates = []
     params = []
@@ -544,7 +545,7 @@ def execute_update_email_draft(args: dict) -> dict:
         updates.append("email_body=?")
         params.append(args["body"])
     if not updates:
-        return {"status": "error", "message": "请提供要修改的内容（subject 或 body）"}
+        return {"status": "error", "message": "请提供要修改的内容(subject 或 body)"}
 
     params.append(int(cid))
     db.execute(
@@ -557,7 +558,7 @@ def execute_update_email_draft(args: dict) -> dict:
 
 
 def execute_check_job_status(args: dict) -> dict:
-    """查询评估任务进度。"""
+    """查询评估任务进度."""
     from src.core.database import get_db, dicts_from_rows
     import os, json
 
@@ -590,7 +591,7 @@ def execute_check_job_status(args: dict) -> dict:
 
 
 def execute_list_kb_collections(args: dict) -> dict:
-    """查看知识库概况。"""
+    """查看知识库概况."""
     from tools.vector_store import get_collections, get_collection_stats
     cols = get_collections()
     result = []
