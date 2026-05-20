@@ -166,9 +166,23 @@ def send_emails_job(
     emails_path = mail_dir / "emails.json"
 
     if not emails_path.is_file():
-        raise FileNotFoundError("No emails.json found. Generate emails first.")
-
-    emails = json.loads(emails_path.read_text(encoding="utf-8"))
+        # Fallback: 客服 Agent 直接在 DB 中生成邮件，没有 emails.json
+        # 直接从 DB 查 confirmed 状态的邮件来发送
+        logger.info("No emails.json found, falling back to DB for confirmed emails")
+        db = get_db()
+        rows = db.execute(
+            "SELECT id, contact_email, email_subject, email_body FROM customer "
+            "WHERE email_status='confirmed' AND contact_email IS NOT NULL AND contact_email != ''"
+        ).fetchall()
+        emails = [
+            {"customer_id": r["id"], "to_email": r["contact_email"],
+             "subject": r["email_subject"] or "", "body": r["email_body"] or ""}
+            for r in rows
+        ]
+        if not emails:
+            return {"sent": 0, "failed": 0, "skipped": 0, "message": "No confirmed emails found in database"}
+    else:
+        emails = json.loads(emails_path.read_text(encoding="utf-8"))
 
     # Filter: only send confirmed emails (skip draft, already-sent, skipped)
     to_send = []
