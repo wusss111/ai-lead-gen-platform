@@ -169,12 +169,16 @@ def execute_get_customer_detail(args: dict) -> dict:
     cid = args.get("customer_id")
     if not cid:
         return {"found": False, "message": "请提供客户ID"}
+    try:
+        cid = int(cid)
+    except (ValueError, TypeError):
+        return {"found": False, "message": f"customer_id 必须是整数，实际值: {repr(cid)}"}
 
     db = get_db()
     row = db.execute(
         "SELECT c.*, COALESCE(s.name, '') as salesperson_name "
         "FROM customer c LEFT JOIN salesperson s ON c.assigned_salesperson_id = s.id "
-        "WHERE c.id=?", (int(cid),)
+        "WHERE c.id=?", (cid,)
     ).fetchone()
 
     if not row:
@@ -193,13 +197,17 @@ def execute_generate_inquiry_email(args: dict) -> dict:
 
     if not cid:
         return {"status": "error", "message": "请提供客户ID"}
+    try:
+        cid = int(cid)
+    except (ValueError, TypeError):
+        return {"status": "error", "message": f"customer_id 必须是整数，实际值: {repr(cid)}"}
 
     db = get_db()
     row = db.execute(
         "SELECT c.*, COALESCE(s.name, '') as salesperson_name "
         "FROM customer c LEFT JOIN salesperson s ON c.assigned_salesperson_id = s.id "
         "WHERE c.id=? AND c.contact_email IS NOT NULL AND c.contact_email != ''",
-        (int(cid),),
+        (cid,),
     ).fetchone()
 
     if not row:
@@ -263,6 +271,10 @@ def execute_list_email_status(args: dict) -> dict:
     cid = args.get("customer_id")
 
     if cid:
+        try:
+            cid = int(cid)
+        except (ValueError, TypeError):
+            return {"found": False, "message": f"customer_id 必须是整数，实际值: {repr(cid)}"}
         row = db.execute(
             "SELECT id, company_name, contact_email, email_status, email_sent_at, "
             "tracking_last_opened_at FROM customer WHERE id=?",

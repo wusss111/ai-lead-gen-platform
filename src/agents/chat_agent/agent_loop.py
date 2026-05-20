@@ -29,6 +29,73 @@ def _get_reasoning(msg) -> str | None:
         return msg.model_extra.get("reasoning_content")
     return None
 
+
+def validate_tool_call(func_name: str, func_args: dict) -> dict | None:
+    """校验工具调用参数。返回 None=通过，返回 dict=错误信息。"""
+    # 1. 查找工具定义
+    schema = None
+    for td in TOOL_DEFINITIONS:
+        if td["function"]["name"] == func_name:
+            schema = td["function"]
+            break
+    if not schema:
+        return {
+            "error": f"工具 '{func_name}' 不存在",
+            "available_tools": list(TOOL_EXECUTORS.keys()),
+            "instruction": "请只用以上已注册工具，不要编造其他工具名。",
+        }
+
+    params_schema = schema.get("parameters", {})
+    properties = params_schema.get("properties", {})
+    required = params_schema.get("required", [])
+
+    # 2. 检查必填参数
+    for param_name in required:
+        val = func_args.get(param_name)
+        if val is None or val == "":
+            return {
+                "error": f"缺少必填参数 '{param_name}'",
+                "required": required,
+                "your_params": list(func_args.keys()),
+            }
+
+    # 3. 检查额外参数（模型编造的参数在这里被拦截）
+    for arg_name in func_args:
+        if arg_name.startswith("_"):
+            continue  # 系统内部参数
+        if arg_name not in properties:
+            return {
+                "error": f"参数 '{arg_name}' 不存在于 {func_name} 中",
+                "valid_params": list(properties.keys()),
+                "invalid_param": arg_name,
+                "instruction": f"请只用有效参数 {list(properties.keys())}，不要添加额外参数。",
+            }
+
+    # 4. 类型校验（integer）
+    for arg_name, arg_value in func_args.items():
+        prop = properties.get(arg_name, {})
+        if prop.get("type") == "integer" and arg_value is not None:
+            try:
+                int(arg_value)
+            except (ValueError, TypeError):
+                return {
+                    "error": f"参数 '{arg_name}' 应为整数，实际值: {repr(arg_value)}",
+                    "expected": "integer",
+                }
+
+    # 5. 枚举校验
+    for arg_name, arg_value in func_args.items():
+        prop = properties.get(arg_name, {})
+        enum_vals = prop.get("enum", [])
+        if enum_vals and arg_value not in enum_vals:
+            return {
+                "error": f"参数 '{arg_name}' 的值 '{arg_value}' 无效",
+                "allowed_values": enum_vals,
+            }
+
+    return None  # 校验通过
+
+
 SYSTEM_PROMPT = """你是"小贸"，外贸客户平台的技术助手。
 
 ## 仅有的 5 个函数（精确名称，禁止使用任何其他名称）
@@ -162,18 +229,24 @@ def run_agent(
                 try:
                     func_args = json.loads(tc.function.arguments)
                 except json.JSONDecodeError:
-                    func_args = {}
+                    func_args = {"_parse_error": True, "_raw": tc.function.arguments[:200]}
 
                 logger.info("Agent 调用工具: %s(%s)", func_name, func_args)
-                executor = TOOL_EXECUTORS.get(func_name)
-                if executor:
-                    result = executor(func_args)
+
+                # 硬校验：参数名、类型、枚举、必填
+                validation_error = validate_tool_call(func_name, func_args)
+                if validation_error:
+                    result = validation_error
                 else:
-                    result = {
-                        "error": f"工具 '{func_name}' 不存在",
-                        "available_tools": list(TOOL_EXECUTORS.keys()),
-                        "instruction": "你调用了不存在的工具。请只用以上5个已注册工具。如果无法完成任务，直接告知用户。禁止换名字重试。",
-                    }
+                    executor = TOOL_EXECUTORS.get(func_name)
+                    if executor:
+                        result = executor(func_args)
+                    else:
+                        result = {
+                            "error": f"工具 '{func_name}' 不存在",
+                            "available_tools": list(TOOL_EXECUTORS.keys()),
+                            "instruction": "你调用了不存在的工具。请只用以上5个已注册工具。如果无法完成任务，直接告知用户。禁止换名字重试。",
+                        }
 
                 tool_calls_log.append({"name": func_name, "args": func_args, "result": result})
 
@@ -300,19 +373,24 @@ def run_agent_stream(user_message: str, history: list[dict] | None = None, *, mo
                 try:
                     func_args = _json.loads(tc.function.arguments)
                 except Exception:
-                    func_args = {}
+                    func_args = {"_parse_error": True, "_raw": tc.function.arguments[:200]}
 
                 yield ("tool_start", _json.dumps({"name": func_name, "args": func_args}, ensure_ascii=False))
 
-                executor = TOOL_EXECUTORS.get(func_name)
-                if executor:
-                    result = executor(func_args)
+                # 硬校验：参数名、类型、枚举、必填
+                validation_error = validate_tool_call(func_name, func_args)
+                if validation_error:
+                    result = validation_error
                 else:
-                    result = {
-                        "error": f"工具 '{func_name}' 不存在",
-                        "available_tools": list(TOOL_EXECUTORS.keys()),
-                        "instruction": "你调用了不存在的工具。请只用以上5个已注册工具。如果无法完成任务，直接告知用户。禁止换名字重试。",
-                    }
+                    executor = TOOL_EXECUTORS.get(func_name)
+                    if executor:
+                        result = executor(func_args)
+                    else:
+                        result = {
+                            "error": f"工具 '{func_name}' 不存在",
+                            "available_tools": list(TOOL_EXECUTORS.keys()),
+                            "instruction": "你调用了不存在的工具。请只用以上5个已注册工具。如果无法完成任务，直接告知用户。禁止换名字重试。",
+                        }
                 tool_calls_log.append({"name": func_name, "args": func_args, "result": result})
 
                 yield ("tool_result", _json.dumps({"name": func_name, "result": result}, ensure_ascii=False))
