@@ -14,7 +14,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "search_knowledge_base",
-            "description": "搜索企业知识库，获取产品信息、公司文档、采购表单、行业知识等。可用于回答关于公司产品、业务、资质等问题。",
+            "description": "search_knowledge_base：搜索知识库。参数query(搜索词,必填)和collection(可选,限定产品信息/公司文档/采购表单)。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -36,7 +36,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "search_customers",
-            "description": "在客户资源库中搜索客户，返回匹配的公司名称、联系人、邮箱、评分、推荐等级等信息。",
+            "description": "search_customers：搜索CRM客户库。参数query(公司名或邮箱关键词,必填)。返回匹配客户的基本信息和评分。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -53,13 +53,13 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "get_customer_detail",
-            "description": "获取指定客户的完整详细信息，包括评估结果、评分明细、跟进建议等。",
+            "description": "get_customer_detail：获取客户完整信息。参数customer_id(整数,必填)。返回评估结果、评分、跟进建议等全部字段。",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "customer_id": {
                         "type": "integer",
-                        "description": "客户ID（数字）",
+                        "description": "客户ID（整数,必填）",
                     },
                 },
                 "required": ["customer_id"],
@@ -70,7 +70,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "generate_inquiry_email",
-            "description": "为客户生成询盘邮件草稿。会结合知识库中的产品信息生成个性化邮件。邮件生成后需要用户确认。",
+            "description": "generate_inquiry_email：生成询盘邮件草稿（不是发送！）。参数customer_id(整数,必填)和language(可选,auto/zh/en)。生成后需用户确认。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -92,7 +92,7 @@ TOOL_DEFINITIONS = [
         "type": "function",
         "function": {
             "name": "list_email_status",
-            "description": "查看客户的邮件发送状态（草稿/已确认/已发送/失败/已读/未读）。",
+            "description": "list_email_status：查询邮件发送状态和阅读状态。参数customer_id(整数,可选,不传则列出所有)。这是唯一的邮件状态查询函数，不要使用view_email_status、check_email等其他名称。",
             "parameters": {
                 "type": "object",
                 "properties": {

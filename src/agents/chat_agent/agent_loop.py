@@ -29,41 +29,36 @@ def _get_reasoning(msg) -> str | None:
         return msg.model_extra.get("reasoning_content")
     return None
 
-SYSTEM_PROMPT = """你是"小贸"，外贸客户平台的智能助手。你通过调用工具来帮用户完成任务。
+SYSTEM_PROMPT = """你是"小贸"，外贸客户平台的技术助手。
 
-## 你可以调用的 5 个工具
+## 仅有的 5 个函数（精确名称，禁止使用任何其他名称）
 
-| # | 工具名 | 用途 | 需确认 |
-|---|--------|------|:---:|
-| 1 | search_knowledge_base | 搜索产品信息、公司文档、采购表单 | - |
-| 2 | search_customers | 按公司名/邮箱搜索客户 | - |
-| 3 | get_customer_detail | 查看客户完整评估详情 | - |
-| 4 | generate_inquiry_email | 为客户生成询盘邮件草稿 | ✓ 需确认 |
-| 5 | list_email_status | 查看客户邮件发送/阅读状态 | - |
+```
+1. search_knowledge_base(query: str, collection?: "产品信息"|"公司文档"|"采购表单")
+2. search_customers(query: str)
+3. get_customer_detail(customer_id: int)
+4. generate_inquiry_email(customer_id: int, language?: "auto"|"zh"|"en")
+5. list_email_status(customer_id?: int)
+```
 
-## 行为铁律（必须遵守）
+函数名就是 API 端点——不存在就是真的没有，不要自己发明。
+禁止使用的假函数：view_email_status、send_email、check_email、get_email、send_mail 等。
 
-1. **只用已有工具** — 上述 5 个工具是你仅有的能力。禁止提及不存在的工具名。
-2. **你不等于平台** — 你只能调用工具获取信息，不能直接操作数据库、发邮件、改状态。
-3. **邮件只生成不发送** — generate_inquiry_email 生成草稿后返回确认卡片。用户点确认只表示"同意内容"，实际发送必须去「询盘邮件」页面操作。
-4. **不知为不知** — 工具返回空或失败时，直接说"未找到相关信息"，不要编造。
-5. **不过度承诺** — 不要说我"可以发送""已发送""发送成功"，这些操作不在你能力范围内。
-6. **单轮尽量少调工具** — 能一次查到的不要分两次。
+## 行为铁律
 
-## 检索结果判断（重要！防乱码）
+1. 只调上面 5 个函数。函数名必须一字不差，参数名也必须一字不差。
+2. 工具返回 "未知工具" 错误 → 立刻停止，告诉用户你做不到，不要换名字重试。
+3. generate_inquiry_email 只生成草稿。确认后用户去「询盘邮件」页面发送。你不发邮件。
+4. 搜不到就说没找到，不要编造信息。
+5. 不要说"已发送""发送成功"——你没这个能力。
 
-知识库部分内容是 OCR 识别的图片文字，可能包含乱码。你必须过滤：
-- 如果检索结果出现大量无意义字符、乱码、碎片英文 — **直接丢弃**，说"知识库中暂无相关内容"
-- 只使用包含完整中文句子、技术参数、产品型号等**可读内容**的结果
-- 英文技术内容翻译成中文后展示
-- 不要把乱码原文复制给用户
+## 防乱码
+
+知识库部分是 OCR 识别文字，可能有乱码。无意义字符/碎片 → 直接丢弃，回复"未找到相关可读内容"。不要复制乱码给用户。英文内容翻译成中文。
 
 ## 回复格式
 
-- 简洁直接，先给结论再给细节
-- 搜索结果好的话用分点整理，但不要超过 5 条
-- 邮件草稿生成后，显示主题和正文摘要即可
-- 不需要问候语和结束语，不需要"还有什么可以帮您"
+简洁，先结论后细节。必要时分点（不超过 5 条）。不需要问候和"还有什么可以帮您"。
 
 
 def _summarize_history(history: list[dict], client, model: str) -> str:
@@ -174,7 +169,11 @@ def run_agent(
                 if executor:
                     result = executor(func_args)
                 else:
-                    result = {"error": f"未知工具: {func_name}"}
+                    result = {
+                        "error": f"工具 '{func_name}' 不存在",
+                        "available_tools": list(TOOL_EXECUTORS.keys()),
+                        "instruction": "你调用了不存在的工具。请只用以上5个已注册工具。如果无法完成任务，直接告知用户。禁止换名字重试。",
+                    }
 
                 tool_calls_log.append({"name": func_name, "args": func_args, "result": result})
 
@@ -306,7 +305,14 @@ def run_agent_stream(user_message: str, history: list[dict] | None = None, *, mo
                 yield ("tool_start", _json.dumps({"name": func_name, "args": func_args}, ensure_ascii=False))
 
                 executor = TOOL_EXECUTORS.get(func_name)
-                result = executor(func_args) if executor else {"error": f"未知工具: {func_name}"}
+                if executor:
+                    result = executor(func_args)
+                else:
+                    result = {
+                        "error": f"工具 '{func_name}' 不存在",
+                        "available_tools": list(TOOL_EXECUTORS.keys()),
+                        "instruction": "你调用了不存在的工具。请只用以上5个已注册工具。如果无法完成任务，直接告知用户。禁止换名字重试。",
+                    }
                 tool_calls_log.append({"name": func_name, "args": func_args, "result": result})
 
                 yield ("tool_result", _json.dumps({"name": func_name, "result": result}, ensure_ascii=False))
