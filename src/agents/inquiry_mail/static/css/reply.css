@@ -1,0 +1,17 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f0f1a; color: #e0e0e0; line-height: 1.5; }
+.reply-editor { max-width: 480px; margin: 0 auto; padding: 1rem; }
+.editor-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; }
+.back-btn { color: #888; text-decoration: none; font-size: 1.2rem; }
+.editor-title { font-size: 1.05rem; font-weight: 700; }
+.editor-sub { font-size: 0.78rem; color: #888; }
+.editor-info-callout { background: rgba(255,255,255,0.05); border-radius: 8px; padding: 0.75rem; margin-bottom: 1rem; font-size: 0.82rem; }
+.editor-info-callout strong { color: #aaa; display: block; margin-bottom: 0.35rem; }
+.editor-info-callout p { color: #999; max-height: 200px; overflow-y: auto; white-space: pre-wrap; }
+.editor-form label { display: block; margin-bottom: 0.75rem; }
+.editor-form label span { font-size: 0.78rem; color: #888; display: block; margin-bottom: 0.25rem; }
+.editor-form input, .editor-form textarea { width: 100%; padding: 0.6rem 0.7rem; border-radius: 6px; border: 1px solid #333; background: #1a1a2e; color: #e0e0e0; font-size: 0.88rem; font-family: inherit; }
+.editor-form textarea { resize: vertical; }
+.editor-actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+.btn-send { flex: 1; padding: 0.65rem; border-radius: 6px; border: none; background: #07c160; color: #fff; font-size: 0.9rem; font-weight: 600; cursor: pointer; }
+.btn-save { flex: 1; padding: 0.65rem; border-radius: 6px; border: 1px solid #444; background: transparent; color: #aaa; font-size: 0.88rem; cursor: pointer; }

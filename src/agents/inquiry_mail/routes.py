@@ -14,7 +14,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from src.core.auth import require_auth
 from src.core.config import PlatformConfig, get_config
 from src.core.redis_utils import get_queue, get_rq_job_info
-from src.core.database import get_db, dicts_from_rows
+from src.core.database import get_db, dicts_from_rows, dict_from_row
 from src.agents.inquiry_mail.config import InquiryMailConfig
 from src.agents.inquiry_mail.tasks import generate_emails_job, send_emails_job
 
@@ -355,6 +355,137 @@ def check_smtp(
         "host": mail_cfg.smtp_host or "(未配置)",
         "from": mail_cfg.from_email or "(未配置)",
     })
+
+
+# ---- Reply draft API routes ----
+
+
+@router.get("/reply/{draft_id}", response_class=HTMLResponse)
+def reply_editor_page(draft_id: int, request: Request):
+    """Mobile-friendly reply editor for salespersons."""
+    from src.core.app import app
+    db = get_db()
+    draft = db.execute(
+        "SELECT r.*, c.company_name, c.contact_name, c.contact_email, c.country_region, "
+        "s.name as salesperson_name "
+        "FROM reply_draft r "
+        "JOIN customer c ON r.customer_id = c.id "
+        "JOIN salesperson s ON r.salesperson_id = s.id "
+        "WHERE r.id=?",
+        (draft_id,),
+    ).fetchone()
+    if not draft:
+        raise HTTPException(404, "草稿不存在")
+
+    t = app.state.jinja_env.get_template("reply_editor.html")
+    return HTMLResponse(t.render({
+        "request": request,
+        "draft": dict_from_row(draft),
+    }))
+
+
+@router.get("/api/replies")
+def list_reply_drafts(
+    _: Annotated[None, Depends(require_auth)],
+    status: str = "pending",
+    salesperson_id: str = "",
+) -> JSONResponse:
+    """List reply drafts for admin/review."""
+    db = get_db()
+    where = ["r.status = ?"]
+    params: list[Any] = [status]
+    if salesperson_id.strip():
+        where.append("r.salesperson_id = ?")
+        params.append(int(salesperson_id))
+    rows = db.execute(
+        f"SELECT r.*, c.company_name, s.name as salesperson_name "
+        f"FROM reply_draft r "
+        f"JOIN customer c ON r.customer_id = c.id "
+        f"JOIN salesperson s ON r.salesperson_id = s.id "
+        f"WHERE {' AND '.join(where)} ORDER BY r.created_at DESC LIMIT 100",
+        params,
+    ).fetchall()
+    return JSONResponse(dicts_from_rows(rows))
+
+
+@router.put("/api/replies/{draft_id}")
+def update_reply_draft(
+    draft_id: int,
+    _: Annotated[None, Depends(require_auth)],
+    draft_subject: str = Form(""),
+    draft_body: str = Form(""),
+) -> JSONResponse:
+    """Update a reply draft's subject/body."""
+    db = get_db()
+    db.execute(
+        "UPDATE reply_draft SET draft_subject=?, draft_body=?, status='edited', "
+        "updated_at=datetime('now','localtime') WHERE id=?",
+        (draft_subject.strip(), draft_body.strip(), draft_id),
+    )
+    db.commit()
+    return JSONResponse({"status": "ok"})
+
+
+@router.post("/api/replies/{draft_id}/approve")
+def approve_reply(
+    draft_id: int,
+    _: Annotated[None, Depends(require_auth)],
+) -> JSONResponse:
+    """Approve and send a reply draft using the salesperson's SMTP."""
+    db = get_db()
+    draft = db.execute(
+        "SELECT r.*, s.smtp_host, s.smtp_port, s.smtp_username, s.smtp_password, "
+        "s.name as sp_name, c.contact_email, c.company_name "
+        "FROM reply_draft r "
+        "JOIN salesperson s ON r.salesperson_id = s.id "
+        "JOIN customer c ON r.customer_id = c.id "
+        "WHERE r.id=? AND r.status IN ('pending','edited')",
+        (draft_id,),
+    ).fetchone()
+    if not draft:
+        raise HTTPException(404, "草稿不存在或已处理")
+
+    from tools.email_sender import SmtpConfig, send_single_email
+    smtp_cfg = SmtpConfig(
+        host=draft["smtp_host"], port=draft["smtp_port"] or 587,
+        username=draft["smtp_username"], password=draft["smtp_password"],
+        from_email=draft["smtp_username"], from_name=draft["sp_name"] or "外贸团队",
+    )
+    result = send_single_email(
+        smtp_cfg,
+        to_email=draft["contact_email"],
+        subject=draft["draft_subject"],
+        body_text=draft["draft_body"],
+    )
+    if result["success"]:
+        db.execute(
+            "UPDATE reply_draft SET status='sent', sent_at=datetime('now','localtime'), "
+            "updated_at=datetime('now','localtime') WHERE id=?",
+            (draft_id,),
+        )
+    else:
+        db.execute(
+            "UPDATE reply_draft SET status='send_failed', "
+            "updated_at=datetime('now','localtime') WHERE id=?",
+            (draft_id,),
+        )
+    db.commit()
+    return JSONResponse({"status": "sent" if result["success"] else "failed", "error": result.get("error")})
+
+
+@router.post("/api/replies/{draft_id}/ignore")
+def ignore_reply(
+    draft_id: int,
+    _: Annotated[None, Depends(require_auth)],
+) -> JSONResponse:
+    """Mark a reply draft as ignored."""
+    db = get_db()
+    db.execute(
+        "UPDATE reply_draft SET status='cancelled', updated_at=datetime('now','localtime') WHERE id=?",
+        (draft_id,),
+    )
+    db.commit()
+    return JSONResponse({"status": "ok"})
 
 
 def _parse_ids(raw: str) -> list[int]:
