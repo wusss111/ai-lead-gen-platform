@@ -382,3 +382,11 @@ def send_emails_job(
     failed = sum(1 for r in results if not r.get("send_success"))
 
     return {"sent": sent, "failed": failed, "total": len(results), "emails": emails}
+
+
+def imap_poll_job(data_root: str) -> dict[str, Any]:
+    """RQ job: poll all salespersons IMAP inboxes for replies."""
+    from tools.imap_monitor import poll_all_salespersons
+    replies = poll_all_salespersons(data_root)
+    total = sum(len(v) for v in replies.values())
+    return {"total_replies": total, "salesperson_ids": list(replies.keys())}

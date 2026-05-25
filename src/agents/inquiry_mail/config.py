@@ -25,6 +25,10 @@ class InquiryMailConfig:
     business_hours_start: int = 9
     business_hours_end: int = 17
     queue_name: str = "inquiry_mail:default"
+    imap_poll_interval: int = 60
+    wework_corp_id: str = ""
+    wework_agent_id: str = ""
+    wework_agent_secret: str = ""
 
     @classmethod
     def from_env(cls) -> "InquiryMailConfig":
@@ -45,4 +49,8 @@ class InquiryMailConfig:
             respect_timezone=(os.environ.get("MAIL_RESPECT_TZ") or "true").lower() != "false",
             business_hours_start=int(os.environ.get("MAIL_SEND_HOUR_START") or "9"),
             business_hours_end=int(os.environ.get("MAIL_SEND_HOUR_END") or "17"),
+            imap_poll_interval=int(os.environ.get("IMAP_POLL_INTERVAL") or "60"),
+            wework_corp_id=(os.environ.get("WECOM_CORP_ID") or "").strip(),
+            wework_agent_id=(os.environ.get("WECOM_AGENT_ID") or "").strip(),
+            wework_agent_secret=(os.environ.get("WECOM_AGENT_SECRET") or "").strip(),
         )
