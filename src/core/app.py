@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import time
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -15,6 +18,8 @@ from src.core.config import get_config
 _SRC_DIR = Path(__file__).resolve().parent.parent  # src/
 _SHARED_STATIC = _SRC_DIR / "static"
 _SHARED_TEMPLATES = _SRC_DIR / "templates"
+
+logger = logging.getLogger(__name__)
 
 
 def render(tmpl_name: str, context: dict) -> HTMLResponse:
@@ -136,6 +141,35 @@ def create_app() -> FastAPI:
     app.state.agents = agents
     app.state.jinja_env = jinja_env
     app.state.config = config
+
+    # Schedule IMAP polling (non-blocking background task)
+    @app.on_event("startup")
+    async def _start_imap_scheduler() -> None:
+        from rq import Queue
+        from redis import Redis
+
+        redis_conn = Redis.from_url(config.redis_url)
+        q = Queue("inquiry_mail:default", connection=redis_conn)
+
+        async def _schedule_imap_poll():
+            # Wait for server to fully start before first poll
+            await asyncio.sleep(10)
+            while True:
+                try:
+                    q.enqueue(
+                        "src.agents.inquiry_mail.tasks.imap_poll_job",
+                        str(config.data_dir),
+                        job_timeout=300,
+                        job_id=f"imap_poll_{int(time.time())}",
+                        failure_ttl=3600,
+                        result_ttl=3600,
+                    )
+                except Exception as e:
+                    logger.warning("IMAP poll enqueue failed: %s", e)
+                await asyncio.sleep(60)
+
+        asyncio.create_task(_schedule_imap_poll())
+        logger.info("IMAP poll scheduler started (interval: 60s)")
 
     # Clean up DB connections on shutdown
     @app.on_event("shutdown")
