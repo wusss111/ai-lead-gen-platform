@@ -88,13 +88,22 @@ def send_single_email(
 
 
 def send_emails_batch(
-    config: SmtpConfig,
+    config: SmtpConfig | None = None,
     emails: list[dict[str, Any]],
     *,
     delay_seconds: float = 45.0,
     progress_callback: Callable | None = None,
+    config_factory: Callable[[dict[str, Any]], SmtpConfig] | None = None,
 ) -> list[dict[str, Any]]:
-    """Send multiple emails with configurable delay."""
+    """Send multiple emails with configurable delay.
+
+    Args:
+        config: Default SMTP config (used when config_factory returns None).
+        emails: List of email items.
+        delay_seconds: Delay between sends.
+        progress_callback: Optional progress callback.
+        config_factory: Optional callable(email_item) -> SmtpConfig for per-email config.
+    """
     results = []
     total = len(emails)
     for i, item in enumerate(emails):
@@ -110,8 +119,15 @@ def send_emails_batch(
                 "message": f"发送 {i + 1}/{total}: {item.get('company_name', '')}",
             })
 
+        # Determine SMTP config: per-salesperson (via factory) or global fallback
+        email_cfg = config
+        if config_factory is not None:
+            factory_result = config_factory(item)
+            if factory_result is not None:
+                email_cfg = factory_result
+
         result = send_single_email(
-            config=config,
+            config=email_cfg,
             to_email=str(item.get("contact_email", "")),
             to_name=str(item.get("contact_name", "")),
             subject=str(item.get("subject", "")),

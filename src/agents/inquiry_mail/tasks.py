@@ -279,6 +279,47 @@ def send_emails_job(
         if e.get("body_html"):
             e["body_html"] = inject_tracking_pixel(e["body_html"], tid)
 
+    # Pre-load salesperson SMTP configs for per-salesperson sending
+    from tools.email_sender import SmtpConfig
+
+    sp_smtp: dict[int, dict[str, Any]] = {}
+    rows_sp = db.execute(
+        "SELECT id, smtp_host, smtp_port, smtp_username, smtp_password "
+        "FROM salesperson WHERE is_active=1 AND smtp_host != '' AND smtp_username != ''"
+    ).fetchall()
+    for r in rows_sp:
+        sp_smtp[r["id"]] = {
+            "host": r["smtp_host"], "port": r["smtp_port"],
+            "username": r["smtp_username"], "password": r["smtp_password"],
+        }
+
+    # Build global fallback SMTP config (used when salesperson has no SMTP)
+    _smtp_fields = {"host", "port", "username", "password", "from_email", "from_name", "reply_to_email", "use_tls", "use_ssl"}
+    _global_cfg = SmtpConfig(**{k: v for k, v in smtp_config_dict.items() if k in _smtp_fields})
+
+    def _get_smtp_config(item: dict[str, Any]) -> SmtpConfig | None:
+        """Return salesperson-specific SmtpConfig, or None to fall back to global."""
+        cid = item.get("customer_id")
+        sp_id = None
+        if cid:
+            row = db.execute(
+                "SELECT assigned_salesperson_id FROM customer WHERE id=?", (cid,)
+            ).fetchone()
+            if row:
+                sp_id = row["assigned_salesperson_id"]
+        sp_cfg = sp_smtp.get(sp_id) if sp_id else None
+        if sp_cfg and sp_cfg["username"]:
+            return SmtpConfig(
+                host=sp_cfg["host"], port=sp_cfg["port"],
+                username=sp_cfg["username"], password=sp_cfg["password"],
+                from_email=sp_cfg["username"],
+                from_name=str(smtp_config_dict.get("from_name", "外贸团队")),
+                reply_to_email=sp_cfg["username"],
+                use_tls=bool(smtp_config_dict.get("use_tls", True)),
+                use_ssl=bool(smtp_config_dict.get("use_ssl", False)),
+            )
+        return None  # Fallback to global config
+
     # Auto-detect: use Gmail API only if OAuth token exists (fully set up)
     _repo_root = Path(__file__).resolve().parent.parent.parent.parent
     _gmail_token = _repo_root / "var" / "gmail_token.json"
@@ -294,16 +335,14 @@ def send_emails_job(
             "Run: python tools/setup_gmail_oauth.py  first, then retry. "
             "Falling back to SMTP."
         )
-        from tools.email_sender import SmtpConfig, send_emails_batch as send_batch
-        _smtp_fields = {"host","port","username","password","from_email","from_name","reply_to_email","use_tls","use_ssl"}
-        cfg = SmtpConfig(**{k: v for k, v in smtp_config_dict.items() if k in _smtp_fields})
-        results = send_batch(cfg, to_send, delay_seconds=send_delay, progress_callback=rq_progress)
+        from tools.email_sender import send_emails_batch as send_batch
+        results = send_batch(_global_cfg, to_send, delay_seconds=send_delay,
+                             progress_callback=rq_progress, config_factory=_get_smtp_config)
     else:
         logger.info("Using SMTP for %d emails (delay=%ds)", len(to_send), send_delay)
-        from tools.email_sender import SmtpConfig, send_emails_batch as send_batch
-        _smtp_fields = {"host","port","username","password","from_email","from_name","reply_to_email","use_tls","use_ssl"}
-        cfg = SmtpConfig(**{k: v for k, v in smtp_config_dict.items() if k in _smtp_fields})
-        results = send_batch(cfg, to_send, delay_seconds=send_delay, progress_callback=rq_progress)
+        from tools.email_sender import send_emails_batch as send_batch
+        results = send_batch(_global_cfg, to_send, delay_seconds=send_delay,
+                             progress_callback=rq_progress, config_factory=_get_smtp_config)
 
     # Update emails.json and DB with send results
     email_map = {e.get("customer_id"): i for i, e in enumerate(emails)}
