@@ -251,6 +251,7 @@ function updateBar(pct, label, phase) {
 
 	const _PHASE_ORDER = ['ready', 'fetch', 'eval', 'write', 'done'];
 let _procStartTs = 0;
+let _lastActivePhase = '';
 
 function _fmtTime(sec) {
   if (sec < 60) return Math.round(sec) + '秒';
