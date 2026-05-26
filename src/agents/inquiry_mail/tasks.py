@@ -207,16 +207,19 @@ def send_emails_job(
     if not to_send:
         return {"sent": 0, "failed": 0, "skipped": len(emails) - len(to_send)}
 
-    # Daily quota check
+    # Daily quota check (serialised with BEGIN IMMEDIATE to prevent concurrent overrun)
     db = get_db()
+    db.execute("BEGIN IMMEDIATE")
     sent_today = _get_today_send_count(db)
     remaining = daily_limit - sent_today
     if remaining <= 0:
+        db.rollback()
         logger.warning("Daily limit (%d) reached. %d already sent today.", daily_limit, sent_today)
         return {"sent": 0, "failed": 0, "skipped": len(emails), "error": f"Daily limit ({daily_limit}) reached"}
     if len(to_send) > remaining:
         logger.info("Trimming batch from %d to %d (daily limit %d, %d already sent)", len(to_send), remaining, daily_limit, sent_today)
         to_send = to_send[:remaining]
+    db.commit()  # release write lock — quota reserved, actual sending follows
 
     # Timezone-aware filtering: only send to customers currently in business hours
     skipped_tz_count = 0
@@ -323,12 +326,29 @@ def send_emails_job(
     # Auto-detect: use Gmail API only if OAuth token exists (fully set up)
     _repo_root = Path(__file__).resolve().parent.parent.parent.parent
     _gmail_token = _repo_root / "var" / "gmail_token.json"
+    _TOKEN_DIR = _repo_root / "var" / "gmail_tokens"
     _gmail_secret = _repo_root / "var" / "gmail_client_secret.json"
 
-    if _gmail_token.is_file():
+    if _gmail_token.is_file() or _TOKEN_DIR.is_dir():
         logger.info("Using Gmail API for %d emails (delay=%ds)", len(to_send), send_delay)
         from tools.gmail_sender import send_emails_batch as send_batch
-        results = send_batch(to_send, delay_seconds=send_delay, from_email=from_email, progress_callback=rq_progress)
+
+        # Build sp_id lookup dict: customer_id → salesperson_id
+        cid_to_sp = {}
+        for item in to_send:
+            cid = item.get("customer_id")
+            if cid:
+                row = db.execute(
+                    "SELECT assigned_salesperson_id FROM customer WHERE id=?", (cid,)
+                ).fetchone()
+                if row and row["assigned_salesperson_id"]:
+                    cid_to_sp[cid] = row["assigned_salesperson_id"]
+
+        def _get_sp_id(item: dict) -> int | None:
+            return cid_to_sp.get(item.get("customer_id"))
+
+        results = send_batch(to_send, delay_seconds=send_delay, from_email=from_email,
+                             progress_callback=rq_progress, get_salesperson_id=_get_sp_id)
     elif _gmail_secret.is_file():
         logger.warning(
             "Gmail client secret exists but OAuth token not found. "

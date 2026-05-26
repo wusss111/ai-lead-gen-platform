@@ -20,6 +20,33 @@
     </div>
   </div>
 
+  <!-- Gmail OAuth 教程 -->
+  <details class="tutorial-card" style="margin-bottom:1rem;border:1px solid var(--border-input);border-radius:var(--radius);padding:0.8rem 1rem;background:var(--bg-card)">
+    <summary style="cursor:pointer;font-weight:600;color:var(--text-primary);font-size:0.9rem">Gmail 邮箱绑定教程</summary>
+    <div style="margin-top:0.8rem;font-size:0.85rem;color:var(--text-secondary);line-height:1.7">
+      <p><strong>为什么需要 Gmail 授权？</strong><br>
+      国内网络封锁了 Gmail SMTP 端口（587/465），需要通过 Google OAuth（走 HTTPS 443 端口）发信。<br>
+      每个业务员用自己的 Google 账号独立授权，发信时会自动使用对应业务员的邮箱。</p>
+
+      <p><strong>前提条件</strong></p>
+      <ol>
+        <li>业务员的 Gmail 账号已开启<strong>两步验证</strong>：<a href="https://myaccount.google.com/signinoptions/two-step-verification" target="_blank" rel="noopener">开启两步验证</a></li>
+        <li>如需使用 SMTP（海外网络），请生成<strong>应用专用密码</strong>：<a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">生成应用专用密码</a></li>
+      </ol>
+
+      <p><strong>操作步骤</strong></p>
+      <ol>
+        <li>在下方表格找到对应业务员，点 <strong>"Gmail 授权"</strong> 按钮</li>
+        <li>浏览器会弹出 Google 授权页面</li>
+        <li><strong>用业务员自己的 Gmail 邮箱登录</strong></li>
+        <li>点击"允许"授权发信权限</li>
+        <li>看到"授权成功"后关闭页面即可</li>
+      </ol>
+
+      <p style="color:var(--text-muted);font-size:0.8rem">提示：授权操作需要在<strong>运行平台的这台电脑</strong>上进行，每个业务员授权一次即可长期使用。</p>
+    </div>
+  </details>
+
   <!-- Table -->
   <div class="table-card">
     <table class="data-table">
@@ -29,13 +56,14 @@
           <th>邮箱</th>
           <th>电话</th>
           <th>绑定邮箱</th>
+          <th>Gmail 授权</th>
           <th style="text-align:center">客户数</th>
           <th style="text-align:center">状态</th>
           <th>操作</th>
         </tr>
       </thead>
       <tbody id="tableBody">
-        <tr><td colspan="7" class="empty-cell"><p>加载中...</p></td></tr>
+        <tr><td colspan="8" class="empty-cell"><p>加载中...</p></td></tr>
       </tbody>
     </table>
   </div>

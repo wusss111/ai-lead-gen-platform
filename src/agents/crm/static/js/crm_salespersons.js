@@ -3,37 +3,68 @@ import { apiFetch } from '/static/js/api.js';
 import { showToast } from '/static/js/utils.js';
 
 let _salespersonList = [];
+let _authStatusCache = {};
+
+// ---- Load auth statuses ----
+async function loadAuthStatuses() {
+  _authStatusCache = {};
+  const checks = _salespersonList.map(async s => {
+    try {
+      const r = await apiFetch('/crm/api/salespersons/' + s.id + '/gmail-status');
+      if (r.ok) {
+        const data = await r.json();
+        _authStatusCache[s.id] = data.authorized;
+      }
+    } catch (e) { /* ignore */ }
+  });
+  await Promise.all(checks);
+}
 
 // ---- Load table ----
 async function loadTable() {
   const tbody = document.getElementById('tableBody');
   try {
     const r = await apiFetch('/crm/api/salespersons');
-    if (!r.ok) { tbody.innerHTML = '<tr><td colspan="7" class="empty-state">加载失败</td></tr>'; return; }
+    if (!r.ok) { tbody.innerHTML = '<tr><td colspan="8" class="empty-state">加载失败</td></tr>'; return; }
     const list = await r.json();
     _salespersonList = list;
     if (!list.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">暂无销售人员，点击"添加销售"开始</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">暂无销售人员，点击"添加销售"开始</td></tr>';
       return;
     }
-    tbody.innerHTML = list.map(s => `
-      <tr>
-        <td><strong>${esc(s.name)}</strong></td>
-        <td>${esc(s.email) || '-'}</td>
-        <td>${esc(s.phone) || '-'}</td>
-        <td>${s.smtp_username ? esc(s.smtp_username) : '<span style="color:var(--text-muted)">未绑定</span>'}</td>
-        <td>${s.customer_count || 0}</td>
-        <td>${s.is_active ? '<span class="badge badge-green">在职</span>' : '<span class="badge badge-gray">停用</span>'}</td>
-        <td style="display:flex; gap:0.35rem; flex-wrap:wrap">
-          <button class="btn-small" onclick="editSalesperson(${s.id})">编辑</button>
-          <button class="btn-small" onclick="toggleActive(${s.id}, ${s.is_active ? 0 : 1})">${s.is_active ? '停用' : '启用'}</button>
-          <button class="btn-small btn-danger" onclick="deleteSalesperson(${s.id}, '${escJs(s.name)}')">删除</button>
-        </td>
-      </tr>
-    `).join('');
+    // Load auth statuses in background then re-render
+    loadAuthStatuses().then(() => renderTable());
   } catch (e) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">加载异常</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-state">加载异常</td></tr>';
   }
+}
+
+function renderTable() {
+  const tbody = document.getElementById('tableBody');
+  tbody.innerHTML = _salespersonList.map(s => `
+    <tr>
+      <td><strong>${esc(s.name)}</strong></td>
+      <td>${esc(s.email) || '-'}</td>
+      <td>${esc(s.phone) || '-'}</td>
+      <td>${s.smtp_username ? esc(s.smtp_username) : '<span style="color:var(--text-muted)">未绑定</span>'}</td>
+      <td>${authBadge(s.id)}</td>
+      <td>${s.customer_count || 0}</td>
+      <td>${s.is_active ? '<span class="badge badge-green">在职</span>' : '<span class="badge badge-gray">停用</span>'}</td>
+      <td style="display:flex; gap:0.35rem; flex-wrap:wrap">
+        <button class="btn-small" onclick="editSalesperson(${s.id})">编辑</button>
+        <button class="btn-small" onclick="authGmail(${s.id})">Gmail 授权</button>
+        <button class="btn-small" onclick="toggleActive(${s.id}, ${s.is_active ? 0 : 1})">${s.is_active ? '停用' : '启用'}</button>
+        <button class="btn-small btn-danger" onclick="deleteSalesperson(${s.id}, '${escJs(s.name)}')">删除</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function authBadge(id) {
+  if (_authStatusCache[id]) {
+    return '<span class="badge badge-green">已授权</span>';
+  }
+  return '<span class="badge badge-gray">未授权</span>';
 }
 
 function esc(s) {
@@ -147,5 +178,27 @@ window.deleteSalesperson = async function (id, name) {
 document.getElementById('spModal').addEventListener('click', (e) => {
   if (e.target === e.currentTarget) closeModal();
 });
+
+window.authGmail = async function (id) {
+  const sp = _salespersonList.find(s => s.id === id);
+  if (!sp) { showToast('未找到该销售人员', 'error'); return; }
+  if (!confirm('即将为「' + sp.name + '」启动 Gmail 授权流程。\n\n浏览器会弹出 Google 授权页面，请用业务员自己的 Gmail 邮箱登录并授权。\n\n点击确定继续。')) return;
+
+  showToast('正在启动授权流程，请查看浏览器...', 'info');
+  try {
+    const r = await apiFetch('/crm/api/salespersons/' + id + '/gmail-auth', { method: 'POST' });
+    if (r.ok) {
+      const data = await r.json();
+      _authStatusCache[id] = true;
+      renderTable();
+      showToast('Gmail 授权成功！已绑定邮箱: ' + (data.email || sp.email), 'info');
+    } else {
+      const err = await r.json().catch(() => ({}));
+      showToast('授权失败: ' + (err.error || r.status), 'error');
+    }
+  } catch (e) {
+    showToast('授权异常: ' + e.message, 'error');
+  }
+};
 
 document.addEventListener('DOMContentLoaded', loadTable);

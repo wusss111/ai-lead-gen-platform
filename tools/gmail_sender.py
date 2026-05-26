@@ -24,33 +24,85 @@ logger = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-_TOKEN_PATH = _REPO_ROOT / "var" / "gmail_token.json"
+_TOKEN_DIR = _REPO_ROOT / "var" / "gmail_tokens"
 _CLIENT_SECRET_PATH = _REPO_ROOT / "var" / "gmail_client_secret.json"
+# Legacy: single global token
+_GLOBAL_TOKEN_PATH = _REPO_ROOT / "var" / "gmail_token.json"
 
 
-def _get_creds() -> Credentials:
-    """Get valid Gmail API credentials, running OAuth flow if needed."""
+def _token_path_for(salesperson_id: int | None) -> Path:
+    """Get the token file path for a specific salesperson, or global fallback."""
+    if salesperson_id is not None:
+        return _TOKEN_DIR / f"gmail_token_{salesperson_id}.json"
+    return _GLOBAL_TOKEN_PATH
+
+
+def _get_creds(salesperson_id: int | None = None) -> Credentials:
+    """Get valid Gmail API credentials, running OAuth flow if needed.
+
+    Args:
+        salesperson_id: If provided, load token for that salesperson.
+                        If None, use global token.
+    """
+    token_path = _token_path_for(salesperson_id)
     creds = None
-    if _TOKEN_PATH.is_file():
+    if token_path.is_file():
         creds = Credentials.from_authorized_user_info(
-            json.loads(_TOKEN_PATH.read_text(encoding="utf-8")), SCOPES
+            json.loads(token_path.read_text(encoding="utf-8")), SCOPES
         )
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
+            token_path.parent.mkdir(parents=True, exist_ok=True)
+            token_path.write_text(creds.to_json(), encoding="utf-8")
         else:
-            if not _CLIENT_SECRET_PATH.is_file():
-                raise FileNotFoundError(
-                    f"Gmail client secret not found at {_CLIENT_SECRET_PATH}. "
-                    "Please save the OAuth JSON there."
-                )
-            flow = InstalledAppFlow.from_client_secrets_file(
-                str(_CLIENT_SECRET_PATH), SCOPES
-            )
-            creds = flow.run_local_server(port=0)
-        _TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _TOKEN_PATH.write_text(creds.to_json(), encoding="utf-8")
+            # Can't auto-renew without interactive auth
+            return creds  # Will fail on use, caller must handle
     return creds
+
+
+def has_token(salesperson_id: int) -> bool:
+    """Check if a valid Gmail API token exists for the given salesperson."""
+    token_path = _token_path_for(salesperson_id)
+    if not token_path.is_file():
+        # Also check legacy global token
+        return _GLOBAL_TOKEN_PATH.is_file()
+    try:
+        creds = _get_creds(salesperson_id)
+        return creds is not None and creds.valid
+    except Exception:
+        return False
+
+
+def run_oauth_for_salesperson(salesperson_id: int) -> dict[str, Any]:
+    """Run interactive OAuth flow for a salesperson. Returns {success, email}."""
+    if not _CLIENT_SECRET_PATH.is_file():
+        return {"success": False, "error": "Gmail client secret 未配置，请联系管理员"}
+
+    flow = InstalledAppFlow.from_client_secrets_file(
+        str(_CLIENT_SECRET_PATH), SCOPES
+    )
+    creds = flow.run_local_server(
+        port=0,
+        authorization_prompt_message="请使用业务员自己的 Gmail 邮箱登录授权",
+        success_message="Gmail 授权成功！可以关闭此页面。",
+    )
+
+    token_path = _token_path_for(salesperson_id)
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    token_path.write_text(creds.to_json(), encoding="utf-8")
+
+    # Get email from credentials
+    try:
+        from googleapiclient.discovery import build
+        service = build("gmail", "v1", credentials=creds)
+        profile = service.users().getProfile(userId="me").execute()
+        email = profile.get("emailAddress", "")
+    except Exception:
+        email = ""
+
+    logger.info("Gmail OAuth completed for salesperson %d: %s", salesperson_id, email)
+    return {"success": True, "email": email}
 
 
 def send_single_email(
@@ -60,14 +112,17 @@ def send_single_email(
     *,
     body_html: str = "",
     from_email: str = "",
+    salesperson_id: int | None = None,
 ) -> dict[str, Any]:
-    """Send a single email via Gmail API. Returns {success, error}."""
+    """Send a single email via Gmail API. Uses per-salesperson token if provided."""
     to_email = to_email.strip()
     if not to_email:
         return {"success": False, "error": "收件人邮箱为空"}
 
     try:
-        creds = _get_creds()
+        creds = _get_creds(salesperson_id)
+        if creds is None or not creds.valid:
+            return {"success": False, "error": "Gmail 授权已过期，请重新授权"}
         service = build("gmail", "v1", credentials=creds)
 
         # Build RFC 2822 message
@@ -102,14 +157,34 @@ def send_single_email(
         return {"success": False, "error": str(e)}
 
 
+def get_all_salesperson_token_ids() -> set[int]:
+    """Return set of salesperson IDs that have valid Gmail tokens."""
+    valid_ids: set[int] = set()
+    if not _TOKEN_DIR.is_dir():
+        return valid_ids
+    for token_file in _TOKEN_DIR.glob("gmail_token_*.json"):
+        try:
+            sid = int(token_file.stem.replace("gmail_token_", ""))
+            valid_ids.add(sid)
+        except ValueError:
+            pass
+    return valid_ids
+
+
 def send_emails_batch(
     emails: list[dict[str, Any]],
     *,
     delay_seconds: float = 45.0,
     from_email: str = "",
     progress_callback: Callable | None = None,
+    get_salesperson_id: Callable[[dict[str, Any]], int | None] | None = None,
 ) -> list[dict[str, Any]]:
-    """Send multiple emails via Gmail API."""
+    """Send multiple emails via Gmail API.
+
+    Args:
+        get_salesperson_id: Optional callback that takes an email item dict
+                           and returns the salesperson_id to use for that email.
+    """
     results = []
     total = len(emails)
     for i, item in enumerate(emails):
@@ -125,12 +200,14 @@ def send_emails_batch(
                 "message": f"Gmail API {i + 1}/{total}: {item.get('company_name', '')}",
             })
 
+        sp_id = get_salesperson_id(item) if get_salesperson_id else None
         r = send_single_email(
             to_email=str(item.get("contact_email", "")),
             subject=str(item.get("subject", "")),
             body_text=str(item.get("body_text", "")),
             body_html=str(item.get("body_html", "")),
             from_email=from_email,
+            salesperson_id=sp_id,
         )
         results.append({**item, "send_success": r["success"], "send_error": r["error"]})
 

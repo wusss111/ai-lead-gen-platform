@@ -61,6 +61,14 @@ def crm_detail_page(customer_id: int, request: Request):
     ).fetchone()
     customer["email_open_count"] = tr["open_count"] if tr else 0
     customer["email_last_open"] = tr["last_open"] if tr else None
+    # 解析全部邮箱列表
+    emails_all = []
+    try:
+        if customer.get("contact_emails_all"):
+            emails_all = __import__("json").loads(customer["contact_emails_all"])
+    except Exception:
+        pass
+    customer["emails_all"] = emails_all
     t = app.state.jinja_env.get_template("crm_detail.html")
     return HTMLResponse(t.render({
         "request": request,
@@ -147,8 +155,10 @@ def list_customers(
         where.append("c.data_quality = ?")
         params.append(data_quality.strip())
 
-    if email_empty.strip():
+    if email_empty.strip() == '1':
         where.append("(c.contact_email IS NULL OR c.contact_email = '')")
+    elif email_empty.strip() == '0':
+        where.append("c.contact_email IS NOT NULL AND c.contact_email != ''")
 
     if created_from.strip():
         where.append("c.created_at >= ?")
@@ -268,7 +278,7 @@ manual_review_flag, email_status, email_sent_at, assigned_salesperson_id,
 tracking_last_opened_at)
 - deal_recommendation values: 'high_intent'/'watch'/'no'
 - email_status values: 'generated'/'sent'/'failed'/null
-- overall_score_computed: 0-100
+- overall_score_computed: 1.0-5.0 (weighted average of 3 sub-scores)
 - country_region: 2-letter country code (US, DE, FR, etc.)
 - priority: 'high'/'medium'/'low'
 - assigned_salesperson_id: references salesperson table (NULL if unassigned)
@@ -307,7 +317,7 @@ Rules:
 - Sort by overall_score_computed DESC by default unless user specifies otherwise."""
 
     try:
-        result = chat_json(prompt, max_tokens=500, temperature=0.1)
+        result = chat_json([{"role": "user", "content": prompt}], max_tokens=500, temperature=0.1)
     except Exception as e:
         logger.exception("Smart search LLM call failed")
         raise HTTPException(500, f"AI 搜索失败: {e}")
@@ -448,6 +458,31 @@ def delete_salesperson(
     return JSONResponse({"status": "ok"})
 
 
+# ---- Gmail OAuth per salesperson ----
+
+@router.post("/api/salespersons/{sp_id}/gmail-auth")
+def gmail_auth_salesperson(sp_id: int, _: Annotated[None, Depends(require_auth)]) -> JSONResponse:
+    """Run interactive Gmail OAuth flow for a specific salesperson."""
+    db = get_db()
+    sp = db.execute("SELECT id, name, email FROM salesperson WHERE id=?", (sp_id,)).fetchone()
+    if not sp:
+        raise HTTPException(404, "销售人员不存在")
+
+    from tools.gmail_sender import run_oauth_for_salesperson
+    result = run_oauth_for_salesperson(int(sp["id"]))
+    if result["success"]:
+        return JSONResponse({"status": "ok", "email": result["email"]})
+    return JSONResponse({"status": "error", "error": result.get("error", "授权失败")}, status_code=400)
+
+
+@router.get("/api/salespersons/{sp_id}/gmail-status")
+def gmail_auth_status(sp_id: int, _: Annotated[None, Depends(require_auth)]) -> JSONResponse:
+    """Check if a salesperson has a valid Gmail token."""
+    from tools.gmail_sender import has_token
+    ok = has_token(sp_id)
+    return JSONResponse({"authorized": ok})
+
+
 # ---- Customer assignment ----
 
 @router.put("/api/customers/{customer_id}/assign")
@@ -513,9 +548,14 @@ def delete_customer(
     row = db.execute("SELECT 1 FROM customer WHERE id=?", (customer_id,)).fetchone()
     if not row:
         raise HTTPException(404, "客户不存在")
-    db.execute("DELETE FROM email_tracking WHERE customer_id=?", (customer_id,))
-    db.execute("DELETE FROM customer WHERE id=?", (customer_id,))
-    db.commit()
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        db.execute("DELETE FROM email_tracking WHERE customer_id=?", (customer_id,))
+        db.execute("DELETE FROM customer WHERE id=?", (customer_id,))
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     logger.info("Deleted customer %d", customer_id)
     return JSONResponse({"status": "ok"})
 
@@ -535,15 +575,20 @@ def batch_delete_customers(
     db = get_db()
     placeholders = ",".join("?" for _ in ids)
     flat_ids = [int(x) for x in ids]
-    db.execute(
-        f"DELETE FROM email_tracking WHERE customer_id IN ({placeholders})",
-        flat_ids,
-    )
-    cur = db.execute(
-        f"DELETE FROM customer WHERE id IN ({placeholders})",
-        flat_ids,
-    )
-    db.commit()
+    db.execute("BEGIN IMMEDIATE")
+    try:
+        db.execute(
+            f"DELETE FROM email_tracking WHERE customer_id IN ({placeholders})",
+            flat_ids,
+        )
+        cur = db.execute(
+            f"DELETE FROM customer WHERE id IN ({placeholders})",
+            flat_ids,
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     actual = cur.rowcount
     logger.info("Batch deleted %d customers", actual)
     return JSONResponse({"status": "ok", "deleted_count": actual})
