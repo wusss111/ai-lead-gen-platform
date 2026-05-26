@@ -236,21 +236,24 @@ function updateProgress(j, status) {
   if (phase === 'write' || phase === 'done') {
     pct = 100;
   } else if (phase === 'prefetch') {
-    // 预抓取阶段：cur=0 表示抓取中，cur=1 表示完成
-    pct = cur > 0 ? 15 : 8;
+    // 预抓取阶段：tot>1 表示网站数，有增量进度；否则显示等待中
+    if (tot > 1) {
+      pct = Math.min(15, Math.round((8 * cur) / tot) + 7);
+    } else {
+      pct = cur > 0 ? 15 : 8;
+    }
   } else if (tot > 0) {
-    pct = Math.min(99, Math.round((100 * cur) / tot));
-    if (cur > 0 && pct < 1) pct = 1;
-    // 预抓取已完成，进度从 15% 开始计
-    if (pct < 15) pct = 15;
+    pct = Math.min(99, Math.round((85 * cur) / tot) + 14);
+    if (cur > 0 && pct < 15) pct = 15;
     pct = Math.min(99, pct);
   }
 
   let label;
   if (phase === 'prefetch') {
-    label = cur > 0 ? (p.message || '网站抓取完成') : '并行抓取网站中...';
+    if (tot > 1) label = (p.message || '') + ' · ' + cur + '/' + tot + ' 网站';
+    else label = cur > 0 ? (p.message || '网站抓取完成') : '并行抓取网站中...';
   } else {
-    label = (p.label || p.message || phase) + (tot > 1 ? ' · ' + cur + '/' + tot + ' 行' : '');
+    label = (p.message || p.label || '') + (tot > 1 ? ' · ' + cur + '/' + tot + ' 行' : '');
   }
   updateBar(pct, label, phaseLabel(phase));
   updatePhaseStepper(phase, cur, tot, p);
@@ -273,7 +276,7 @@ function _fmtTime(sec) {
   return h + '时' + Math.floor((sec % 3600) / 60) + '分';
 }
 
-function updatePhaseStepper(phase, cur, tot) {
+function updatePhaseStepper(phase, cur, tot, p) {
   if (!el('phaseStepper')) return;
   const now = Date.now();
   if (!_procStartTs && (cur > 0 || phase === 'prefetch' || phase === 'fetch' || phase === 'eval')) _procStartTs = now;
@@ -286,8 +289,8 @@ function updatePhaseStepper(phase, cur, tot) {
 
   const steps = document.querySelectorAll('.phase-step');
   steps.forEach(step => {
-    const p = step.dataset.phase;
-    const pIdx = _PHASE_ORDER.indexOf(p);
+    const stepPhase = step.dataset.phase;
+    const pIdx = _PHASE_ORDER.indexOf(stepPhase);
     step.classList.remove('active', 'done');
     if (pIdx < idx) step.classList.add('done');
     else if (pIdx === idx) step.classList.add('active');
@@ -304,10 +307,12 @@ function updatePhaseStepper(phase, cur, tot) {
 
   if (phase === 'done' || phase === 'write') {
     if (pfStat) { pfStat.classList.add('done'); pfStat.textContent = '已完成'; }
-    if (evalStat) { evalStat.classList.add('done'); evalStat.textContent = tot + ' 行完成'; }
+    if (evalStat) { evalStat.classList.add('done'); evalStat.textContent = '已完成'; }
     const elapsed = _procStartTs ? (now - _procStartTs) / 1000 : 0;
-    if (el('phaseStat-write')) {
-      el('phaseStat-write').textContent = elapsed > 0 ? '耗时 ' + _fmtTime(elapsed) : '已完成';
+    const writeStat = el('phaseStat-write');
+    if (writeStat) {
+      writeStat.textContent = elapsed > 0 ? '耗时 ' + _fmtTime(elapsed) : '写入中...';
+      if (phase === 'done') writeStat.classList.add('done');
     }
     return;
   }
@@ -318,10 +323,14 @@ function updatePhaseStepper(phase, cur, tot) {
     return;
   }
 
-  // Phase: prefetch
+  // Phase: prefetch — 网站抓取进度
   if (phase === 'prefetch') {
-    if (cur > 0) {
-      if (pfStat) { pfStat.classList.add('done'); pfStat.textContent = (p.message || '已完成'); }
+    if (tot > 1) {
+      // 增量进度：显示 x/y 网站
+      const elapsed = _procStartTs ? (now - _procStartTs) / 1000 : 1;
+      if (pfStat) pfStat.textContent = cur + '/' + tot + ' 个网站';
+    } else if (cur > 0) {
+      if (pfStat) { pfStat.classList.add('done'); pfStat.textContent = p && p.message ? p.message : '已完成'; }
     } else {
       if (pfStat) pfStat.textContent = '并行抓取中...';
     }
@@ -339,7 +348,7 @@ function updatePhaseStepper(phase, cur, tot) {
     if (evalStat) evalStat.textContent = cur + '/' + tot + ' · 约剩' + _fmtTime(eta);
   } else if (tot > 0) {
     if (pfStat) { pfStat.classList.add('done'); pfStat.textContent = '已完成'; }
-    if (evalStat) evalStat.textContent = '0/' + tot + ' · 准备中...';
+    if (evalStat) evalStat.textContent = '0/' + tot + ' · 等待中...';
   }
 }
 

@@ -347,6 +347,7 @@ def _prefetch_all_websites(
     no_fetch: bool,
     cache_dir: Path,
     control_callback: ControlCallback | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> dict[str, tuple[list[dict], list[str]]]:
     """预抓取所有行的唯一网站，返回 {website: (pages, errors)}。
     已在缓存中的网站极快（<0.1s），未缓存的并行抓取。"""
@@ -360,9 +361,11 @@ def _prefetch_all_websites(
     if not websites or no_fetch:
         return {}
 
-    logger.info("预抓取 %d 个唯一网站 (%d workers)...", len(websites), _PREFETCH_WORKERS)
+    n_total = len(websites)
+    logger.info("预抓取 %d 个唯一网站 (%d workers)...", n_total, _PREFETCH_WORKERS)
     cache: dict[str, tuple[list[dict], list[str]]] = {}
     lock = threading.Lock()
+    _done_count = 0
 
     _prefetch_cancelled = False
     _prefetch_lock = threading.Lock()
@@ -392,6 +395,9 @@ def _prefetch_all_websites(
                 ws, pages, errs = f.result()
                 with lock:
                     cache[ws] = (pages, errs)
+                    _done_count += 1
+                if progress_callback:
+                    progress_callback(_done_count, n_total)
             with _prefetch_lock:
                 if _prefetch_cancelled:
                     for f in pending:
@@ -553,10 +559,16 @@ def run_pipeline(
     # ══ 阶段 1：预抓取所有唯一网站 ══
     if not no_fetch:
         report(phase="prefetch", current=0, total=1, message="正在并行抓取网站...")
+
+        def _on_prefetch(done: int, total: int) -> None:
+            report(phase="prefetch", current=done, total=total,
+                   message=f"网站抓取 {done}/{total}")
+
         try:
             _prefetch_cache = _prefetch_all_websites(
                 df, start, end, no_fetch=no_fetch, cache_dir=cache,
                 control_callback=control_callback,
+                progress_callback=_on_prefetch,
             )
         except _ControlExit:
             raise
