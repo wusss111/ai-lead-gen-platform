@@ -136,11 +136,13 @@ async function submitUrlEval() {
 // ---- Polling ----
 async function pollJob(jobId) {
   _currentPollingJobId = jobId;
+  _lastActivePhase = '';  // 重置步骤条状态
   el('progressActions').style.display = 'flex';
   el('btnPause').disabled = false;
   el('btnCancel').disabled = false;
 
   let lastSt = null;
+  let _pollStuck = 0;
   const poll = async () => {
     try {
       const r = await apiFetch('/customer-eval/api/jobs/' + jobId);
@@ -150,9 +152,43 @@ async function pollJob(jobId) {
       updateProgress(j, st);
       if (st !== lastSt) {
         lastSt = st;
+        _pollStuck = 0;
         if (st === 'started') showToast('AI 正在评估客户数据...', 'info');
+      } else {
+        _pollStuck++;
       }
-      if (st === 'finished') { updateBar(100, '已完成', '完成'); showResult(j, jobId); return; }
+      // H1: 超时保护 — 如果 job 长时间无变化，停止轮询
+      if (_pollStuck > 180) {
+        showToast('任务可能已中断（长时间无响应），请刷新页面检查', 'error');
+        setLoading(false);
+        _currentPollingJobId = null;
+        return;
+      }
+      // C3: 先检查取消/暂停状态，再检查 finished（cancel 后 RQ 会标记为 finished）
+      if (j.progress && j.progress.control === 'cancel') {
+        updateBar(100, '已取消', '取消');
+        resultArea.innerHTML = '<div class="result-item error"><strong>已取消</strong> — 已处理的数据已保存。剩余行未处理。</div>';
+        el('progressActions').style.display = 'none';
+        _currentPollingJobId = null;
+        if (el('btnCancel')._cancelTimeout) { clearTimeout(el('btnCancel')._cancelTimeout); }
+        setLoading(false);
+        if (window.__removeJob) window.__removeJob(jobId);
+        return;
+      }
+      if (st === 'finished') {
+        // 检查是否是被取消后结束的
+        if (j.result && j.result.control === 'cancel') {
+          updateBar(100, '已取消', '取消');
+          resultArea.innerHTML = '<div class="result-item error"><strong>已取消</strong> — ' + (j.result.rows || '?') + ' 行已保存。</div>';
+          el('progressActions').style.display = 'none';
+          _currentPollingJobId = null;
+          if (el('btnCancel')._cancelTimeout) { clearTimeout(el('btnCancel')._cancelTimeout); }
+          setLoading(false);
+          if (window.__removeJob) window.__removeJob(jobId);
+          return;
+        }
+        updateBar(100, '已完成', '完成'); showResult(j, jobId); return;
+      }
       if (j.progress && j.progress.control === 'pause') {
         updateBar(100, '已暂停 · ' + (j.progress.message || ''), '暂停');
         resultArea.innerHTML = '<div class="result-item warn"><strong>已暂停</strong> — 已处理的数据已保存。可点击下方继续处理剩余行。</div>';
@@ -161,23 +197,15 @@ async function pollJob(jobId) {
         _currentPollingJobId = null;
         setLoading(false);
         if (j.result && j.result.batch_end_exclusive) {
-          // Show continue button
           const nextRow = j.result.batch_end_exclusive;
           resultArea.innerHTML += '<div class="result-item" style="margin-top:0.5rem"><button class="btn-submit" onclick="window.continueBatchV2(\'' + jobId + '\')">继续处理（从第 ' + (nextRow + 1) + ' 行开始）</button></div>';
         }
         return;
       }
-      if (j.progress && j.progress.control === 'cancel') {
-        updateBar(100, '已取消', '取消');
-        resultArea.innerHTML = '<div class="result-item error"><strong>已取消</strong> — 已处理的数据已保存。剩余行未处理。</div>';
-        el('progressActions').style.display = 'none';
-        _currentPollingJobId = null;
-        setLoading(false);
-        if (window.__removeJob) window.__removeJob(jobId);
-        return;
-      }
       if (st === 'failed') {
         if (window.__removeJob) window.__removeJob(jobId);
+        _currentPollingJobId = null;
+        el('progressActions').style.display = 'none';
         progressCard.style.display = 'block';
         const err = j.error || '无详细信息';
         resultArea.innerHTML = '<div class="result-item error"><strong>评估失败</strong><br>' + escapeHtml(String(err).slice(0, 500)) + '</div>';
@@ -197,7 +225,7 @@ function updateProgress(j, status) {
   progressCard.style.display = 'block';
   if (!p || typeof p !== 'object') {
     if (status === 'queued') updateBar(6, '排队中...', '排队中');
-    else if (status === 'started') updateBar(12, '处理中...', '启动中');
+    else if (status === 'started') { updateBar(12, '处理中...', '启动中'); updatePhaseStepper('ready', 0, 0); }
     return;
   }
   const cur = Number(p.current) || 0;
@@ -205,22 +233,92 @@ function updateProgress(j, status) {
   let pct = 0;
   const phase = p.phase || '';
   if (phase === 'write' || phase === 'done') pct = 100;
-  else if (tot > 0) pct = Math.min(99, Math.round((100 * cur) / tot));
-  updateBar(pct, (p.message || phase) + (tot ? ' · ' + cur + '/' + tot + ' 行' : ''), phaseLabel(phase));
+  else if (tot > 0) {
+    pct = Math.min(99, Math.round((100 * cur) / tot));
+    // 大批量时前几行 pct 会四舍五入成 0，至少显示 1% 避免看起来卡住
+    if (cur > 0 && pct < 1) pct = 1;
+  }
+  const label = (p.label || p.message || phase) + (tot ? ' · ' + cur + '/' + tot + ' 行' : '');
+  updateBar(pct, label, phaseLabel(phase));
+  updatePhaseStepper(phase, cur, tot);
 }
 
 function updateBar(pct, label, phase) {
   progressBar.style.width = pct + '%';
   progressLabel.textContent = label;
   progressPct.textContent = pct + '%';
-  if (phase) progressPhase.textContent = phase;
+}
+
+	const _PHASE_ORDER = ['ready', 'fetch', 'eval', 'write', 'done'];
+let _procStartTs = 0;
+
+function _fmtTime(sec) {
+  if (sec < 60) return Math.round(sec) + '秒';
+  if (sec < 3600) return Math.floor(sec / 60) + '分' + Math.round(sec % 60) + '秒';
+  const h = Math.floor(sec / 3600);
+  return h + '时' + Math.floor((sec % 3600) / 60) + '分';
+}
+
+function updatePhaseStepper(phase, cur, tot) {
+  if (!el('phaseStepper')) return;
+  const now = Date.now();
+  if (!_procStartTs && (cur > 0 || phase === 'fetch' || phase === 'eval')) _procStartTs = now;
+  const activePhase = (phase === 'fetch' || phase === 'eval') ? 'fetch' : phase;
+  const idx = _PHASE_ORDER.indexOf(activePhase);
+  if (idx < 0) return;
+
+  const steps = document.querySelectorAll('.phase-step');
+  steps.forEach(step => {
+    const p = step.dataset.phase;
+    const pIdx = _PHASE_ORDER.indexOf(p);
+    step.classList.remove('active', 'done');
+    if (pIdx < idx) step.classList.add('done');
+    else if (pIdx === idx) step.classList.add('active');
+  });
+
+  document.querySelectorAll('.phase-line').forEach(line => {
+    line.classList.remove('done');
+    const prevStep = line.previousElementSibling;
+    if (prevStep && prevStep.classList.contains('done')) line.classList.add('done');
+  });
+
+  const fetchStat = el('phaseStat-fetch');
+  const evalStat = el('phaseStat-eval');
+
+  if (phase === 'done' || phase === 'write') {
+    if (fetchStat) { fetchStat.classList.add('done'); fetchStat.textContent = tot + '/' + tot + ' 已完成'; }
+    if (evalStat) { evalStat.classList.add('done'); evalStat.textContent = '已完成'; }
+    const elapsed = _procStartTs ? (now - _procStartTs) / 1000 : 0;
+    if (fetchStat && elapsed > 0) fetchStat.textContent = tot + '/' + tot + ' · 耗时' + _fmtTime(elapsed);
+    return;
+  }
+
+  if (phase === 'ready') {
+    if (fetchStat) fetchStat.textContent = '准备中...';
+    if (evalStat) evalStat.textContent = '等待中';
+    return;
+  }
+
+  if (tot > 0 && cur > 0) {
+    const elapsed = _procStartTs ? (now - _procStartTs) / 1000 : 1;
+    const rate = cur / Math.max(1, elapsed);
+    const remaining = Math.max(0, tot - cur);
+    const eta = rate > 0 ? remaining / rate : 0;
+    if (fetchStat) fetchStat.textContent = cur + '/' + tot + ' · 约剩' + _fmtTime(eta);
+    if (evalStat) evalStat.textContent = 'AI 评估中...';
+  } else if (tot > 0) {
+    if (fetchStat) fetchStat.textContent = '0/' + tot + ' · 抓取网站中...';
+    if (evalStat) evalStat.textContent = '等待中';
+  }
 }
 
 function phaseLabel(p) {
-  const map = { fetch: '抓取网站信息', eval: 'AI 评估中', score: '计算评分', write: '写入结果', done: '完成' };
-  return map[p] || p || '处理中';
+  const map = {
+    ready: '准备中', fetch: '逐行处理', eval: 'AI评估',
+    classify: '处理中', write: '写入结果', done: '完成'
+  };
+  return map[p] || p;
 }
-
 function showResult(j, jobId) {
   if (window.__removeJob) window.__removeJob(jobId);
   const r = j.result || {};
@@ -251,24 +349,98 @@ function escapeHtml(s) {
 }
 
 // ---- Restore active jobs on page load ----
+async function checkCrashedBatches() {
+  try {
+    const r = await apiFetch('/customer-eval/api/batches');
+    if (!r.ok) return;
+    const batches = await r.json();
+    const running = batches.filter(b => b.status === 'started' && b.rq_status === 'started');
+    const crashed = batches.filter(b => b.status === 'started' && b.rq_status !== 'started');
+
+    // 有正在运行的批次：自动显示进度条，但不锁定 UI（不禁用上传按钮）
+    if (running.length > 0) {
+      progressCard.style.display = 'block';
+      el('progressActions').style.display = 'flex';
+      el('btnPause').disabled = false;
+      el('btnCancel').disabled = false;
+      _currentPollingJobId = running[0].id;
+      // 注意：不调 setLoading(true)，上传按钮保持可用
+      updateBar(6, '恢复追踪: ' + escapeHtml(running[0].original_filename || running[0].id), '追踪中');
+      setTimeout(() => pollJob(running[0].id), 500);
+    }
+
+    if (crashed.length > 0) {
+      let html = resultArea.innerHTML;
+      html += '<div class="result-item warn"><strong>发现中断的评估任务</strong><br>以下批次未完成，可以继续：</div>';
+      crashed.forEach(b => {
+        html += '<div class="result-item" style="margin-top:0.5rem"><strong>' + escapeHtml(b.original_filename || '') + '</strong> — 已完成 ' + (b.rows_completed || 0) + ' 行' +
+          ' <button class="btn-submit" onclick="window.resumeBatch(\'' + b.id + '\', ' + (b.rows_completed || 0) + ')" style="font-size:0.85rem;padding:0.3rem 0.8rem;margin-left:0.5rem">▶ 继续</button>' +
+          ' <button class="btn-cancel" onclick="window.forceCancelBatch(\'' + b.id + '\')" style="font-size:0.85rem;padding:0.3rem 0.8rem;margin-left:0.25rem;background:#6c757d;color:#fff;border:none;border-radius:4px;cursor:pointer">清除</button></div>';
+      });
+      resultArea.innerHTML = html;
+    }
+  } catch(e) {}
+}
+
+// 用户手动点击查看运行中的任务
+window.trackRunningBatch = function(batchId) {
+  resultArea.innerHTML = '';
+  progressCard.style.display = 'block';
+  setLoading(true);
+  pollJob(batchId);
+};
+
+// 强制取消（不需要 Worker 响应，直接更新 DB）
+window.forceCancelBatch = async function(batchId) {
+  if (!confirm('确定要强制取消这个任务吗？已处理的数据会保留。')) return;
+  try {
+    const r = await apiFetch('/customer-eval/api/jobs/' + batchId + '/cancel', { method: 'POST' });
+    if (r.ok) {
+      resultArea.innerHTML = '';
+      showToast('已取消，刷新页面即可', 'info');
+    } else {
+      showToast('取消失败: ' + r.status, 'error');
+    }
+  } catch(e) {
+    showToast('取消失败: ' + e.message, 'error');
+  }
+};
+
+window.resumeBatch = async function(batchId, fromRow) {
+  setLoading(true);
+  progressCard.style.display = 'block';
+  resultArea.innerHTML = '<div class="result-item"><p>正在从第 ' + (fromRow + 1) + ' 行恢复评估...</p></div>';
+  try {
+    const r = await apiFetch('/customer-eval/api/jobs/' + batchId + '/resume', { method: 'POST' });
+    if (!r.ok) { showToast('恢复失败: ' + r.status, 'error'); setLoading(false); return; }
+    const data = await r.json();
+    pollJob(data.job_id);
+  } catch(e) { showToast('恢复异常: ' + e.message, 'error'); setLoading(false); }
+};
+
 function restoreActiveJobs() {
   const jobs = window.__getTrackedJobs ? window.__getTrackedJobs() : [];
-  if (!jobs.length) return;
-  // Find jobs belonging to customer-eval that are still active
+  if (!jobs.length) {
+    checkCrashedBatches();
+    return;
+  }
   const evalJobs = jobs.filter(j => j.agent === 'customer-eval');
-  if (!evalJobs.length) return;
-
-  // Poll the first active job (show progress UI)
-  const job = evalJobs[0];
-  progressCard.style.display = 'block';
-  updateBar(6, '恢复追踪: ' + (job.label || job.jobId), '恢复中');
-  setLoading(true);
-  pollJob(job.jobId);
+  if (evalJobs.length) {
+    // 自动恢复进度：显示进度卡片 + 轮询，不禁用上传按钮
+    progressCard.style.display = 'block';
+    el('progressActions').style.display = 'flex';
+    el('btnPause').disabled = false;
+    el('btnCancel').disabled = false;
+    _currentPollingJobId = evalJobs[0].jobId;
+    updateBar(6, '恢复追踪: ' + escapeHtml(evalJobs[0].label || evalJobs[0].jobId), '追踪中');
+    setTimeout(() => pollJob(evalJobs[0].jobId), 500);
+    return;
+  }
+  checkCrashedBatches();
 }
 
 // Run restoration on page load
 document.addEventListener('DOMContentLoaded', () => {
-  // Wait a tick for the global tracker to initialize
   setTimeout(restoreActiveJobs, 600);
 });
 
@@ -306,6 +478,19 @@ window.cancelJob = async function() {
     if (r.ok) {
       showToast('取消信号已发送，正在保存...', 'info');
       updateBar(50, '正在保存已处理数据...', '取消');
+      // 超时保护：15 秒后如果还没停，强制释放 UI（Worker 可能已死）
+      const _cancelTimeout = setTimeout(() => {
+        if (_currentPollingJobId === jid) {
+          _currentPollingJobId = null;
+          setLoading(false);
+          el('progressActions').style.display = 'none';
+          updateBar(100, '已取消（强制）', '取消');
+          resultArea.innerHTML = '<div class="result-item warn"><strong>已强制取消</strong> — 任务可能未响应，已处理数据已保存。<br>如需彻底清除，请刷新页面。</div>';
+          showToast('取消超时，已强制释放', 'error');
+        }
+      }, 15000);
+      // 保存 timeout ID 以便在正常取消时清除
+      el('btnCancel')._cancelTimeout = _cancelTimeout;
     } else {
       showToast('取消失败', 'error');
       el('btnCancel').disabled = false;
@@ -320,13 +505,17 @@ window.cancelJob = async function() {
 
 // ---- Continue batch ----
 window.continueBatchV2 = async function (jobId) {
-  resultArea.innerHTML = '';
-  updateBar(6, '提交下一批...', '排队');
-  const fd = new FormData();
-  if (el('cbDryRun').checked) fd.append('dry_run', 'on');
-  if (el('cbNoFetch').checked) fd.append('no_fetch', 'on');
-  const r = await apiPost('/customer-eval/api/jobs/' + jobId + '/continue', fd);
-  if (!r.ok) { showToast('继续失败: ' + r.status, 'error'); return; }
-  if (window.__trackJob) window.__trackJob(jobId, '续批', 'customer-eval');
-  await pollJob(jobId);
+  try {
+    resultArea.innerHTML = '';
+    updateBar(6, '提交下一批...', '排队');
+    const fd = new FormData();
+    if (el('cbDryRun').checked) fd.append('dry_run', 'on');
+    if (el('cbNoFetch').checked) fd.append('no_fetch', 'on');
+    const r = await apiPost('/customer-eval/api/jobs/' + jobId + '/continue', fd);
+    if (!r.ok) { showToast('继续失败: ' + r.status, 'error'); return; }
+    if (window.__trackJob) window.__trackJob(jobId, '续批', 'customer-eval');
+    await pollJob(jobId);
+  } catch (e) {
+    showToast('继续请求失败: ' + e.message, 'error');
+  }
 };

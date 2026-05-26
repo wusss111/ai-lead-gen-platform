@@ -92,14 +92,37 @@
 
     <!-- ====== PROGRESS CARD ====== -->
     <div class="eval-card" id="progressCard" style="display:none">
-      <div class="card-header">
-        <span class="card-icon">&#9889;</span>
-        <div>
-          <h3>评估进度</h3>
-          <p class="card-desc" id="progressPhase">等待中...</p>
+      <!-- 阶段步骤条 -->
+	      <div class="phase-stepper" id="phaseStepper">
+	        <div class="phase-step" data-phase="fetch">
+	          <div class="phase-dot"><span class="phase-icon">&#127760;</span></div>
+	          <div class="phase-body">
+	            <span class="phase-name">逐行抓取 + 评估</span>
+	            <span class="phase-stat" id="phaseStat-fetch">等待中</span>
+	          </div>
+	        </div>
+	        <div class="phase-line"></div>
+	        <div class="phase-step" data-phase="eval">
+	          <div class="phase-dot"><span class="phase-icon">&#129302;</span></div>
+	          <div class="phase-body">
+	            <span class="phase-name">AI 评估进度</span>
+	            <span class="phase-stat" id="phaseStat-eval">等待中</span>
+	          </div>
+	        </div>
+	        <div class="phase-line"></div>
+	        <div class="phase-step" data-phase="write">
+	          <div class="phase-dot"><span class="phase-icon">&#128196;</span></div>
+	          <div class="phase-body">
+	            <span class="phase-name">写入结果</span>
+	            <span class="phase-stat" id="phaseStat-write">等待中</span>
+	          </div>
+	        </div>
+	      </div>
+          </div>
         </div>
       </div>
-      <div class="progress-wrap">
+
+      <div class="progress-wrap" style="margin-top:1rem">
         <div class="progress-bar" id="progressBar" style="width:0%"></div>
       </div>
       <div class="progress-info">
@@ -144,5 +167,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script type="module" src="/static/customer-eval/js/eval_main.js"></script>
+<script type="module" src="/static/customer-eval/js/eval_main.js?v=20260526"></script>
 {% endblock %}
