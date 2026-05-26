@@ -820,39 +820,36 @@ def run_pipeline(
         # 每行都报告进度，让前端实时看到变化
         report(phase="fetch", current=done, total=n_batch,
                message=f"第 {done}/{n_batch} 行")
-
-    # ── 启动多线程处理 ──
+    # ── 逐行串行处理 ──
     report(phase="fetch", current=0, total=n_batch,
-           message=f"4 线程并发 · 0/{n_batch} 行")
+           message=f"0/{n_batch} 行")
     _cancel_flag[0] = False
 
-    with ThreadPoolExecutor(max_workers=_ROW_WORKERS) as pool:
-        futures = [pool.submit(_process_one_row, i) for i in range(start, end)]
-
-        for f in futures:
-            try:
-                f.result()
-            except _ControlExit as e:
+    for i in range(start, end):
+        if _cancel_flag[0]:
+            break
+        if control_callback:
+            signal = control_callback()
+            if signal in ("cancel", "pause"):
                 with _cancel_lock:
                     _cancel_flag[0] = True
-                for rem in futures:
-                    if not rem.done():
-                        rem.cancel()
-                done_count = e.end_row - start if hasattr(e, 'end_row') else _row_done[0]
-                _save_partial(df, start, _row_done[0] + start, meta, detail_rows, output_path,
-                              append_output, detail_sheet, highlight_manual_review)
                 report(phase="done", current=_row_done[0], total=n_batch,
-                       message=f"已{e.signal}", control=e.signal)
+                       message=f"已{signal}", control=signal)
                 if batch_info_out is not None:
                     batch_info_out.update({"total_rows": n_total, "batch_start_row": start,
                                            "batch_end_exclusive": _row_done[0] + start,
-                                           "has_more": True, "control": e.signal})
-                if e.signal == "pause":
+                                           "has_more": True, "control": signal})
+                if signal == "pause":
                     _write_progress(output_path, _row_done[0] + start, n_total, batch_info_out)
+                raise _ControlExit(signal, _row_done[0] + start)
+        try:
+            _process_one_row(i)
+        except _ControlExit:
+            raise
+        except Exception as exc:
+            logger.exception("行 %d 处理异常: %%s", i + 1, exc)
+            if stop_on_error:
                 raise
-            except Exception as e:
-                logger.exception("行处理线程异常: %s", e)
-                _row_errors.append(str(e))
 
     # ═══ 后处理：输出 Excel ═══
     detail_df = pd.DataFrame(detail_rows) if detail_rows else None
