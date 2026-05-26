@@ -1,6 +1,10 @@
 // mail.js — Inquiry email generation, draft/confirm flow, batch send
 import { apiFetch, apiPost } from '/static/js/api.js';
-import { badgeForRecommendation, badgeForEmailStatus, badgeForReadStatus, showToast } from '/static/js/utils.js';
+import { badgeForRecommendation, badgeForEmailStatus, badgeForReadStatus, showToast, emailToggle, emailPick } from '/static/js/utils.js';
+
+// H5: Email dropdown functions (shared with CRM)
+window._emailToggle = emailToggle;
+window._emailPick = emailPick;
 
 // ---- State ----
 let searchTimer = null;
@@ -8,6 +12,8 @@ let currentJobId = null;
 let selectedCustomerIds = new Set();
 let generatedCount = 0;  // how many emails were generated in current job
 const STORAGE_JOB_KEY = 'mail_current_job';
+let mailPage = 0;
+const MAIL_PAGE_SIZE = 50;
 
 // ---- DOM helpers ----
 function el(id) { return document.getElementById(id); }
@@ -99,46 +105,121 @@ function buildSummaryHtml(emails) {
 
 // ---- SMTP check ----
 async function checkSmtp() {
-  const r = await apiFetch('/inquiry-mail/api/smtp-check');
-  const d = await r.json();
-  const banner = el('smtpBanner');
-  if (!d.configured) {
-    banner.className = 'smtp-banner warn';
-    banner.innerHTML = '<strong>SMTP 未配置</strong> — 邮件生成后不会实际发送。请在 .env 中设置 SMTP_HOST / SMTP_FROM_EMAIL。';
-  } else {
-    banner.className = 'smtp-banner ok';
-    banner.textContent = 'SMTP 已配置：' + d.host + ' (' + d.from + ')';
+  try {
+    const r = await apiFetch('/inquiry-mail/api/smtp-check');
+    const d = await r.json();
+    const banner = el('smtpBanner');
+    if (!d.configured) {
+      banner.className = 'smtp-banner warn';
+      banner.innerHTML = '<strong>SMTP 未配置</strong> — 邮件生成后不会实际发送。请在 .env 中设置 SMTP_HOST / SMTP_FROM_EMAIL。';
+    } else {
+      banner.className = 'smtp-banner ok';
+      banner.textContent = 'SMTP 已配置：' + d.host + ' (' + d.from + ')';
+    }
+    banner.style.display = 'block';
+  } catch (e) {
+    console.error('SMTP check failed:', e);
   }
-  banner.style.display = 'block';
 }
 
 // ---- Load emailable customers ----
 function debounceLoad() {
   clearTimeout(searchTimer);
+  mailPage = 0;  // 筛选条件变化时重置到第一页
   searchTimer = setTimeout(loadEmailable, 300);
 }
 window.debounceLoad = debounceLoad;
 
 async function loadEmailable() {
-  const search = el('searchInput')?.value?.trim() || '';
-  const rec = el('filterRec')?.value || '';
-  const mailStatus = el('filterMailStatus')?.value || '';
-  const readStatus = el('filterReadStatus')?.value || '';
-  const spId = el('filterSalesperson')?.value || '';
-  const params = new URLSearchParams();
-  if (search) params.set('search', search);
-  if (rec) params.set('deal_recommendation', rec);
-  if (mailStatus) params.set('email_status', mailStatus);
-  if (readStatus) params.set('read_status', readStatus);
-  if (spId) params.set('salesperson_id', spId);
-  params.set('limit', '100');
+  try {
+    const search = el('searchInput')?.value?.trim() || '';
+    const rec = el('filterRec')?.value || '';
+    const mailStatus = el('filterMailStatus')?.value || '';
+    const readStatus = el('filterReadStatus')?.value || '';
+    const spId = el('filterSalesperson')?.value || '';
 
-  const r = await apiFetch('/inquiry-mail/api/customers/emailable?' + params.toString());
-  if (!r.ok) return;
-  const customers = await r.json();
-  renderCustomerTable(customers);
+    // Advanced filters
+    const emailEmpty = el('afEmailEmpty')?.value || '';
+    const country = el('afCountry')?.value?.trim() || '';
+    const minScore = el('afMinScore')?.value || '';
+    const role = el('afBuyerSeller')?.value || '';
+    const pri = el('afPriority')?.value || '';
+    const dq = el('afDataQuality')?.value || '';
+    const review = el('afReviewFlag')?.value || '';
+    const from = el('afCreatedFrom')?.value || '';
+    const to = el('afCreatedTo')?.value || '';
+
+    const params = new URLSearchParams();
+    if (search) params.set('search', search);
+    if (rec) params.set('deal_recommendation', rec);
+    if (mailStatus) params.set('email_status', mailStatus);
+    if (readStatus) params.set('read_status', readStatus);
+    if (spId) params.set('salesperson_id', spId);
+    if (emailEmpty) params.set('email_empty', emailEmpty);
+    if (country) params.set('country', country);
+    if (minScore) params.set('min_score', minScore);
+    if (role) params.set('buyer_seller_role', role);
+    if (pri) params.set('priority', pri);
+    if (dq) params.set('data_quality', dq);
+    if (review) params.set('review_flag', review);
+    if (from) params.set('created_from', from);
+    if (to) params.set('created_to', to);
+    params.set('offset', String(mailPage * MAIL_PAGE_SIZE));
+    params.set('limit', String(MAIL_PAGE_SIZE));
+
+    updateFilterBadge();
+
+    const r = await apiFetch('/inquiry-mail/api/customers/emailable?' + params.toString());
+    if (!r.ok) { showToast('加载客户失败: ' + r.status, 'error'); return; }
+    const customers = await r.json();
+    renderCustomerTable(customers);
+    renderMailPagination();
+  } catch (e) {
+    console.error('loadEmailable error:', e);
+    showToast('加载客户列表异常', 'error');
+  }
 }
 window.loadEmailable = loadEmailable;
+
+// ---- Advanced filter functions ----
+window.toggleAdvanced = function() {
+  const panel = el('advancedPanel');
+  if (panel) panel.style.display = panel.style.display === 'none' ? '' : 'none';
+};
+
+window.onAdvancedChange = function() {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => { mailPage = 0; loadEmailable(); }, 500);
+};
+
+window.clearAdvanced = function() {
+  const ids = ['afEmailEmpty', 'afCountry', 'afMinScore', 'afBuyerSeller', 'afPriority', 'afDataQuality', 'afReviewFlag', 'afCreatedFrom', 'afCreatedTo'];
+  ids.forEach(id => {
+    const e = el(id);
+    if (e) e.value = '';
+  });
+  mailPage = 0;
+  loadEmailable();
+};
+
+function updateFilterBadge() {
+  const badge = el('filterBadge');
+  if (!badge) return;
+
+  const ids = ['afEmailEmpty', 'afCountry', 'afMinScore', 'afBuyerSeller', 'afPriority', 'afDataQuality', 'afReviewFlag', 'afCreatedFrom', 'afCreatedTo'];
+  let count = 0;
+  ids.forEach(id => {
+    const e = el(id);
+    if (e && e.value && e.value.trim()) count++;
+  });
+
+  if (count > 0) {
+    badge.style.display = 'inline-flex';
+    badge.textContent = count;
+  } else {
+    badge.style.display = 'none';
+  }
+}
 
 async function loadSalespersons() {
   try {
@@ -154,6 +235,49 @@ async function loadSalespersons() {
       sel.appendChild(opt);
     });
   } catch(e) { console.error('loadSalespersons error:', e); }
+}
+
+function renderMailEmailCell(c) {
+  const primary = c.contact_email || '';
+  let allEmails = [];
+  try { if (c.contact_emails_all) { allEmails = JSON.parse(c.contact_emails_all); } } catch(_) {}
+  if (!primary && allEmails.length === 0) return '-';
+  if (allEmails.length <= 1) {
+    const cls = primary ? '' : ' style="color:var(--text-muted)"';
+    return '<span' + cls + '>' + (esc(primary) || '-') + '</span>';
+  }
+  var items = allEmails.map(function(e, i) {
+    var cls = e === primary ? ' email-selected' : '';
+    var star = i === 0 ? ' <small style=\"color:var(--text-muted)\">推荐</small>' : '';
+    return '<div class=\"email-item' + cls + '\" onclick=\"window._mailEmailPick(this,\'' + escAttr(e) + '\')\">' + esc(e) + star + '</div>';
+  }).join('');
+  return '<div class=\"email-cell\" onclick=\"event.stopPropagation()\">' +
+    '<span class=\"email-primary\" title=\"' + escAttr(primary) + '\">' + esc(primary) + '</span>' +
+    '<span class=\"email-toggle\" onclick=\"window._emailToggle(this)\">▾</span>' +
+    '<div class=\"email-dropdown\">' + items + '</div>' +
+    '</div>';
+}
+window._mailEmailPick = function(itemEl, email) {
+  var dd = itemEl.parentElement;
+  dd.style.display = 'none';
+  if (window.__onEmailSelect) window.__onEmailSelect(email);
+};
+
+window.mailPrevPage = function() {
+  if (mailPage > 0) { mailPage--; loadEmailable(); }
+};
+window.mailNextPage = function() {
+  mailPage++; loadEmailable();
+};
+
+function renderMailPagination() {
+  const wrap = el('mailPagination');
+  if (!wrap) return;
+  wrap.innerHTML = (
+    '<button class="btn-outline btn-sm" onclick="window.mailPrevPage()" ' + (mailPage === 0 ? 'disabled' : '') + '>上一页</button>' +
+    '<span style="margin:0 1rem;color:var(--text-muted)">第 ' + (mailPage + 1) + ' 页</span>' +
+    '<button class="btn-outline btn-sm" onclick="window.mailNextPage()">下一页</button>'
+  );
 }
 
 function renderCustomerTable(customers) {
@@ -174,7 +298,7 @@ function renderCustomerTable(customers) {
       <td class="col-cb"><input type="checkbox" ${sel ? 'checked' : ''} onchange="window.toggleCustomer(${c.id}, this.checked)" /></td>
       <td title="${escAttr(c.company_name || '')}">${esc(c.company_name) || '-'}</td>
       <td title="${escAttr(c.contact_name || '')}">${esc(c.contact_name) || '-'}</td>
-      <td title="${escAttr(c.contact_email || '')}">${esc(c.contact_email) || '-'}</td>
+      <td>${renderMailEmailCell(c)}</td>
       <td>${c.overall_score_computed != null ? c.overall_score_computed.toFixed(1) : '-'}</td>
       <td>${badgeForRecommendation(c.deal_recommendation)}</td>
       <td>${badgeForEmailStatus(c.email_status)}</td>
@@ -341,7 +465,7 @@ window.batchSend = async function() {
   const respectTz = el('chkTimezone')?.checked ?? true;
 
   const fd = new FormData();
-  fd.append('job_id', currentJobId);
+  fd.append('job_id', currentJobId || crypto.randomUUID());
   fd.append('respect_tz', respectTz ? '1' : '0');
   fd.append('customer_ids', Array.from(selectedCustomerIds).join(','));
 

@@ -246,9 +246,13 @@ def send_emails(
     elif respect_tz == "0":
         mail_cfg.respect_timezone = False
 
-    # 检查是否有可用的发送通道：Gmail API token 或 SMTP
-    _gmail_token = Path(__file__).resolve().parent.parent.parent.parent / "var" / "gmail_token.json"
-    _has_gmail = _gmail_token.is_file()
+    # 检查是否有可用的发送通道：Gmail API token（全局或业务员独立）或 SMTP
+    _repo_root = Path(__file__).resolve().parent.parent.parent.parent
+    _gmail_global = _repo_root / "var" / "gmail_token.json"
+    _gmail_tokens_dir = _repo_root / "var" / "gmail_tokens"
+    _has_gmail = _gmail_global.is_file() or (
+        _gmail_tokens_dir.is_dir() and any(_gmail_tokens_dir.glob("gmail_token_*.json"))
+    )
     _has_smtp = bool(mail_cfg.smtp_host and mail_cfg.from_email)
 
     if not _has_gmail and not _has_smtp:
