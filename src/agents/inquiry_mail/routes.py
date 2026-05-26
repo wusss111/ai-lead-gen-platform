@@ -309,6 +309,7 @@ def send_emails(
     )
 
     mail_dir = config.data_dir / "jobs" / job_id
+    mail_dir.mkdir(parents=True, exist_ok=True)
     (mail_dir / "send_rq_job_id.txt").write_text(rq_job.id, encoding="utf-8")
 
     return JSONResponse({
