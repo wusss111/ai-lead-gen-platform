@@ -146,7 +146,14 @@ async function pollJob(jobId) {
   const poll = async () => {
     try {
       const r = await apiFetch('/customer-eval/api/jobs/' + jobId);
-      if (!r.ok) { showToast('查询失败: ' + r.status, 'error'); setLoading(false); return; }
+      if (!r.ok) {
+        showToast('任务已结束', 'info');
+        setLoading(false);
+        _currentPollingJobId = null;
+        el('progressActions').style.display = 'none';
+        if (window.__removeJob) window.__removeJob(jobId);
+        return;
+      }
       const j = await r.json();
       const st = normJobStatus(j.status);
       updateProgress(j, st);
@@ -162,6 +169,8 @@ async function pollJob(jobId) {
         showToast('任务可能已中断（长时间无响应），请刷新页面检查', 'error');
         setLoading(false);
         _currentPollingJobId = null;
+        el('progressActions').style.display = 'none';
+        if (window.__removeJob) window.__removeJob(jobId);
         return;
       }
       // C3: 先检查取消/暂停状态，再检查 finished（cancel 后 RQ 会标记为 finished）
