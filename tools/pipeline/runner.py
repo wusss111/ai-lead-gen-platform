@@ -513,9 +513,12 @@ def run_pipeline(
     batch_info_out: dict[str, Any] | None = None,
     row_save_callback: RowSaveCallback | None = None,
 ) -> pd.DataFrame:
+    _progress_lock = threading.Lock()  # 必须在 report() 之前定义
+
     def report(**payload: Any) -> None:
         if progress_callback:
-            progress_callback(dict(payload))
+            with _progress_lock:
+                progress_callback(dict(payload))
 
     meta = load_excel_io(excel_io_path)
     meta = merge_meta_with_file(meta, pipeline_config_path)
