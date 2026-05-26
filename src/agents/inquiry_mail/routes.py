@@ -130,6 +130,11 @@ def get_emailable_customers(
         params.append(created_to.strip() + " 23:59:59")
 
     where_clause = " AND ".join(where) if where else "1=1"
+    total_row = db.execute(
+        f"SELECT COUNT(*) as n FROM customer c LEFT JOIN salesperson s ON c.assigned_salesperson_id = s.id WHERE {where_clause}",
+        params,
+    ).fetchone()
+    total = total_row["n"] if total_row else 0
     rows = db.execute(
         f"SELECT c.id, c.company_name, c.contact_name, c.contact_email, c.country_region, "
         f"c.deal_recommendation, c.overall_score_computed, c.email_status, "
@@ -140,7 +145,7 @@ def get_emailable_customers(
         f"WHERE {where_clause} ORDER BY c.overall_score_computed DESC LIMIT ? OFFSET ?",
         params + [limit, offset],
     ).fetchall()
-    return JSONResponse(dicts_from_rows(rows))
+    return JSONResponse({"customers": dicts_from_rows(rows), "total": total, "offset": offset, "limit": limit})
 
 
 @router.post("/api/generate")

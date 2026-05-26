@@ -171,9 +171,12 @@ async function loadEmailable() {
 
     const r = await apiFetch('/inquiry-mail/api/customers/emailable?' + params.toString());
     if (!r.ok) { showToast('加载客户失败: ' + r.status, 'error'); return; }
-    const customers = await r.json();
+    const data = await r.json();
+    // Support both old (array) and new ({customers, total}) response formats
+    const customers = data.customers || data;
+    const total = data.total || 0;
     renderCustomerTable(customers);
-    renderMailPagination();
+    renderMailPagination(total);
   } catch (e) {
     console.error('loadEmailable error:', e);
     showToast('加载客户列表异常', 'error');
@@ -270,13 +273,16 @@ window.mailNextPage = function() {
   mailPage++; loadEmailable();
 };
 
-function renderMailPagination() {
+function renderMailPagination(total) {
   const wrap = el('mailPagination');
   if (!wrap) return;
+  const totalPages = total > 0 ? Math.ceil(total / MAIL_PAGE_SIZE) : 0;
+  const isLastPage = totalPages > 0 && (mailPage + 1) >= totalPages;
   wrap.innerHTML = (
     '<button class="btn-outline btn-sm" onclick="window.mailPrevPage()" ' + (mailPage === 0 ? 'disabled' : '') + '>上一页</button>' +
-    '<span style="margin:0 1rem;color:var(--text-muted)">第 ' + (mailPage + 1) + ' 页</span>' +
-    '<button class="btn-outline btn-sm" onclick="window.mailNextPage()">下一页</button>'
+    '<span style="margin:0 0.8rem;color:var(--text-muted);font-size:0.85rem">第 ' + (mailPage + 1) + '/' + (totalPages || '?') + ' 页' +
+    (total > 0 ? '（共 ' + total + ' 条）' : '') + '</span>' +
+    '<button class="btn-outline btn-sm" onclick="window.mailNextPage()" ' + (isLastPage ? 'disabled' : '') + '>下一页</button>'
   );
 }
 
