@@ -65,8 +65,7 @@ def has_token(salesperson_id: int) -> bool:
     """Check if a valid Gmail API token exists for the given salesperson."""
     token_path = _token_path_for(salesperson_id)
     if not token_path.is_file():
-        # Also check legacy global token
-        return _GLOBAL_TOKEN_PATH.is_file()
+        return False
     try:
         creds = _get_creds(salesperson_id)
         return creds is not None and creds.valid

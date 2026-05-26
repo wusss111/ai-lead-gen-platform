@@ -46,7 +46,7 @@ function renderTable() {
       <td><strong>${esc(s.name)}</strong></td>
       <td>${esc(s.email) || '-'}</td>
       <td>${esc(s.phone) || '-'}</td>
-      <td>${s.smtp_username ? esc(s.smtp_username) : '<span style="color:var(--text-muted)">未绑定</span>'}</td>
+      <td>${(s.smtp_username || s.email) ? esc(s.smtp_username || s.email) : '<span style="color:var(--text-muted)">未绑定</span>'}</td>
       <td>${authBadge(s.id)}</td>
       <td>${s.customer_count || 0}</td>
       <td>${s.is_active ? '<span class="badge badge-green">在职</span>' : '<span class="badge badge-gray">停用</span>'}</td>
