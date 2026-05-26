@@ -194,3 +194,96 @@ def generate_emails_batch(
         })
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Reply generation — AI drafts a reply to a customer's incoming email
+# ---------------------------------------------------------------------------
+
+REPLY_SYSTEM_PROMPT = """你是外贸 B2B 邮件回复撰写助手。根据客户的原邮件内容和该客户的历史评估结果，撰写专业、得体的回复。
+
+规则：
+1. 输出必须是合法 JSON 对象，不要 markdown 代码围栏。
+2. 必须包含 subject（以 "Re: " 开头）、body_text（纯文本正文）。
+3. 仔细分析客户的原邮件，理解 ta 的意图（询价？索样？技术问题？合作意向？）。
+4. 回复要针对性回答客户问题，不要泛泛而谈。
+5. 语气：专业、热情、简洁。
+6. 语言：与客户的原始邮件语言保持一致。
+7. 如果客户问了暂时回答不了的问题（如具体价格），诚实表示需要确认后回复，不要编造。
+
+JSON 必填字段：
+- subject: 字符串，回信主题
+- body_text: 字符串，纯文本正文
+- tone: 字符串，回复语气（professional/friendly/urgent）
+- needs_human_input: 布尔值，是否有些问题 AI 无法确定回答需要人工补充
+- human_input_hint: 字符串，需要人工补充的具体问题（needs_human_input 为 true 时必填）"""
+
+
+def generate_reply(
+    *,
+    original_subject: str = "",
+    original_body: str = "",
+    original_from: str = "",
+    customer_context: str = "",
+    from_name: str = "外贸团队",
+    model: str | None = None,
+) -> dict[str, Any]:
+    """Generate a reply draft based on customer's incoming email."""
+    user_content = f"""请为以下客户回信撰写回复：
+
+【客户原始邮件】
+发件人: {original_from}
+主题: {original_subject}
+正文:
+{original_body[:2000]}
+
+【客户背景】
+{customer_context or "无额外信息"}
+
+【发件人署名】
+{from_name}"""
+
+    messages = [
+        {"role": "system", "content": REPLY_SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+    ]
+
+    try:
+        result = chat_json(messages, model=model)
+        result.setdefault("tone", "professional")
+        result.setdefault("needs_human_input", False)
+        result.setdefault("human_input_hint", "")
+        return result
+    except Exception as e:
+        logger.warning("Reply generation failed: %s", e)
+        return {
+            "subject": "",
+            "body_text": "",
+            "tone": "professional",
+            "needs_human_input": True,
+            "human_input_hint": f"生成失败: {e}",
+        }
+
+
+def _build_customer_context(customer_id: int) -> str:
+    """Build a concise context string from customer DB record for reply generation."""
+    from src.core.database import get_db, dict_from_row
+    db = get_db()
+    row = db.execute(
+        "SELECT company_name, contact_name, country_region, target_products, "
+        "deal_recommendation, product_fit_reasons, capability_signals, next_action, "
+        "email_subject, email_body FROM customer WHERE id=?",
+        (customer_id,),
+    ).fetchone()
+    if not row:
+        return ""
+    data = dict(row)
+    parts = []
+    for key in ("company_name", "contact_name", "country_region", "target_products",
+                "deal_recommendation", "product_fit_reasons", "capability_signals", "next_action"):
+        val = data.get(key, "")
+        if val:
+            parts.append(f"{key}: {val}")
+    if data.get("email_subject"):
+        parts.append(f"我们上一封邮件主题: {data['email_subject']}")
+    return "\n".join(parts)

@@ -364,13 +364,26 @@ def create_salesperson(
     name: str = Form(...),
     email: str = Form(""),
     phone: str = Form(""),
+    smtp_host: str = Form(""),
+    smtp_port: str = Form("587"),
+    smtp_username: str = Form(""),
+    smtp_password: str = Form(""),
+    imap_host: str = Form(""),
+    imap_port: str = Form("993"),
+    wework_userid: str = Form(""),
 ) -> JSONResponse:
     if not name.strip():
         raise HTTPException(400, "姓名不能为空")
     db = get_db()
     cur = db.execute(
-        "INSERT INTO salesperson (name, email, phone) VALUES (?, ?, ?)",
-        (name.strip(), email.strip(), phone.strip()),
+        "INSERT INTO salesperson (name, email, phone, smtp_host, smtp_port, "
+        "smtp_username, smtp_password, imap_host, imap_port, wework_userid) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (name.strip(), email.strip(), phone.strip(),
+         smtp_host.strip(), int(smtp_port) if smtp_port.strip() else 587,
+         smtp_username.strip(), smtp_password.strip(),
+         imap_host.strip(), int(imap_port) if imap_port.strip() else 993,
+         wework_userid.strip()),
     )
     db.commit()
     row = db.execute("SELECT * FROM salesperson WHERE id=?", (cur.lastrowid,)).fetchone()
@@ -384,27 +397,41 @@ def update_salesperson(
     name: str = Form(None),
     email: str = Form(None),
     phone: str = Form(None),
-    is_active: int = Form(None),
+    is_active: str = Form(None),
+    smtp_host: str = Form(None),
+    smtp_port: str = Form(None),
+    smtp_username: str = Form(None),
+    smtp_password: str = Form(None),
+    imap_host: str = Form(None),
+    imap_port: str = Form(None),
+    wework_userid: str = Form(None),
 ) -> JSONResponse:
     db = get_db()
     sets = []
     params: list[Any] = []
-    if name is not None:
-        sets.append("name=?")
-        params.append(name.strip())
-    if email is not None:
-        sets.append("email=?")
-        params.append(email.strip())
-    if phone is not None:
-        sets.append("phone=?")
-        params.append(phone.strip())
-    if is_active is not None:
+    str_fields = {
+        "name": name, "email": email, "phone": phone,
+        "smtp_host": smtp_host, "smtp_username": smtp_username,
+        "smtp_password": smtp_password, "imap_host": imap_host,
+        "wework_userid": wework_userid,
+    }
+    for field, val in str_fields.items():
+        if val is not None and val.strip():
+            sets.append(f"{field}=?")
+            params.append(val.strip())
+    if smtp_port is not None and smtp_port.strip():
+        sets.append("smtp_port=?")
+        params.append(int(smtp_port))
+    if imap_port is not None and imap_port.strip():
+        sets.append("imap_port=?")
+        params.append(int(imap_port))
+    if is_active is not None and is_active.strip():
         sets.append("is_active=?")
-        params.append(is_active)
+        params.append(1 if is_active.strip().lower() in ("1", "true") else 0)
     if not sets:
         raise HTTPException(400, "没有需要更新的字段")
     params.append(sp_id)
-    db.execute(f"UPDATE salesperson SET {', '.join(sets)} WHERE id=?", params)
+    db.execute(f"UPDATE salesperson SET {', '.join(sets)}, updated_at=datetime('now','localtime') WHERE id=?", params)
     db.commit()
     return JSONResponse({"status": "ok"})
 

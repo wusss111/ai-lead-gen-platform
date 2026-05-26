@@ -279,6 +279,47 @@ def send_emails_job(
         if e.get("body_html"):
             e["body_html"] = inject_tracking_pixel(e["body_html"], tid)
 
+    # Pre-load salesperson SMTP configs for per-salesperson sending
+    from tools.email_sender import SmtpConfig
+
+    sp_smtp: dict[int, dict[str, Any]] = {}
+    rows_sp = db.execute(
+        "SELECT id, smtp_host, smtp_port, smtp_username, smtp_password "
+        "FROM salesperson WHERE is_active=1 AND smtp_host != '' AND smtp_username != ''"
+    ).fetchall()
+    for r in rows_sp:
+        sp_smtp[r["id"]] = {
+            "host": r["smtp_host"], "port": r["smtp_port"],
+            "username": r["smtp_username"], "password": r["smtp_password"],
+        }
+
+    # Build global fallback SMTP config (used when salesperson has no SMTP)
+    _smtp_fields = {"host", "port", "username", "password", "from_email", "from_name", "reply_to_email", "use_tls", "use_ssl"}
+    _global_cfg = SmtpConfig(**{k: v for k, v in smtp_config_dict.items() if k in _smtp_fields})
+
+    def _get_smtp_config(item: dict[str, Any]) -> SmtpConfig | None:
+        """Return salesperson-specific SmtpConfig, or None to fall back to global."""
+        cid = item.get("customer_id")
+        sp_id = None
+        if cid:
+            row = db.execute(
+                "SELECT assigned_salesperson_id FROM customer WHERE id=?", (cid,)
+            ).fetchone()
+            if row:
+                sp_id = row["assigned_salesperson_id"]
+        sp_cfg = sp_smtp.get(sp_id) if sp_id else None
+        if sp_cfg and sp_cfg["username"]:
+            return SmtpConfig(
+                host=sp_cfg["host"], port=sp_cfg["port"],
+                username=sp_cfg["username"], password=sp_cfg["password"],
+                from_email=sp_cfg["username"],
+                from_name=str(smtp_config_dict.get("from_name", "外贸团队")),
+                reply_to_email=sp_cfg["username"],
+                use_tls=bool(smtp_config_dict.get("use_tls", True)),
+                use_ssl=bool(smtp_config_dict.get("use_ssl", False)),
+            )
+        return None  # Fallback to global config
+
     # Auto-detect: use Gmail API only if OAuth token exists (fully set up)
     _repo_root = Path(__file__).resolve().parent.parent.parent.parent
     _gmail_token = _repo_root / "var" / "gmail_token.json"
@@ -294,16 +335,14 @@ def send_emails_job(
             "Run: python tools/setup_gmail_oauth.py  first, then retry. "
             "Falling back to SMTP."
         )
-        from tools.email_sender import SmtpConfig, send_emails_batch as send_batch
-        _smtp_fields = {"host","port","username","password","from_email","from_name","reply_to_email","use_tls","use_ssl"}
-        cfg = SmtpConfig(**{k: v for k, v in smtp_config_dict.items() if k in _smtp_fields})
-        results = send_batch(cfg, to_send, delay_seconds=send_delay, progress_callback=rq_progress)
+        from tools.email_sender import send_emails_batch as send_batch
+        results = send_batch(_global_cfg, to_send, delay_seconds=send_delay,
+                             progress_callback=rq_progress, config_factory=_get_smtp_config)
     else:
         logger.info("Using SMTP for %d emails (delay=%ds)", len(to_send), send_delay)
-        from tools.email_sender import SmtpConfig, send_emails_batch as send_batch
-        _smtp_fields = {"host","port","username","password","from_email","from_name","reply_to_email","use_tls","use_ssl"}
-        cfg = SmtpConfig(**{k: v for k, v in smtp_config_dict.items() if k in _smtp_fields})
-        results = send_batch(cfg, to_send, delay_seconds=send_delay, progress_callback=rq_progress)
+        from tools.email_sender import send_emails_batch as send_batch
+        results = send_batch(_global_cfg, to_send, delay_seconds=send_delay,
+                             progress_callback=rq_progress, config_factory=_get_smtp_config)
 
     # Update emails.json and DB with send results
     email_map = {e.get("customer_id"): i for i, e in enumerate(emails)}
@@ -343,3 +382,118 @@ def send_emails_job(
     failed = sum(1 for r in results if not r.get("send_success"))
 
     return {"sent": sent, "failed": failed, "total": len(results), "emails": emails}
+
+
+def imap_poll_job(data_root: str) -> dict[str, Any]:
+    """
+    Full pipeline:
+    1. Poll all active salespersons' IMAP inboxes
+    2. Match replies to customers (via tracking_id / email matching)
+    3. Generate AI reply draft
+    4. Save to reply_draft table
+    5. Push WeCom notification card to the salesperson
+    """
+    import re
+    from src.core.database import get_db
+    from tools.imap_monitor import poll_all_salespersons
+    from tools.email_generator import generate_reply, _build_customer_context
+    from tools.wecom_notify import send_reply_card
+
+    db = get_db()
+    all_replies = poll_all_salespersons(data_root)
+    total_processed = 0
+
+    for sp_id, replies in all_replies.items():
+        sp = db.execute(
+            "SELECT name, wework_userid, smtp_username FROM salesperson WHERE id=?",
+            (sp_id,),
+        ).fetchone()
+        if not sp:
+            continue
+
+        for reply in replies:
+            # Match customer — by In-Reply-To / References header matching tracking_id in daily_send_log
+            matched_customer = None
+            tracking_match = reply.get("in_reply_to") or ""
+            # Extract tracking_id from In-Reply-To header (format: tracking_<uuid>)
+            tracking_ids = re.findall(r'tracking_([\w-]+)', tracking_match)
+            if not tracking_ids:
+                # Also try References header
+                refs = reply.get("references", "")
+                tracking_ids = re.findall(r'tracking_([\w-]+)', refs)
+
+            if tracking_ids:
+                for tid in tracking_ids:
+                    row = db.execute(
+                        "SELECT customer_id FROM daily_send_log WHERE tracking_id=?",
+                        (f"tracking_{tid}",),
+                    ).fetchone()
+                    if row:
+                        matched_customer = row["customer_id"]
+                        break
+
+            if not matched_customer:
+                # Fallback: match by sender email address
+                from_addr = reply.get("from_addr", "")
+                email_match = re.search(r'[\w.+-]+@[\w-]+\.[\w.-]+', from_addr)
+                if email_match:
+                    row = db.execute(
+                        "SELECT id FROM customer WHERE contact_email LIKE ? OR contact_emails_all LIKE ?",
+                        (f"%{email_match.group()}%", f"%{email_match.group()}%"),
+                    ).fetchone()
+                    if row:
+                        matched_customer = row["id"]
+
+            if not matched_customer:
+                logger.info("No customer match for reply from %s", reply.get("from_addr", "?"))
+                continue
+
+            # Generate AI reply
+            context = _build_customer_context(matched_customer)
+            try:
+                ai_draft = generate_reply(
+                    original_subject=reply.get("subject", ""),
+                    original_body=reply.get("body", ""),
+                    original_from=reply.get("from_addr", ""),
+                    customer_context=context,
+                    from_name=sp["name"] or "外贸团队",
+                )
+            except Exception as e:
+                logger.error("AI reply generation failed for customer %d: %s", matched_customer, e)
+                continue
+
+            # Save to reply_draft
+            cur = db.execute(
+                "INSERT INTO reply_draft (customer_id, salesperson_id, original_body, "
+                "original_subject, original_message_id, draft_body, draft_subject, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')",
+                (matched_customer, sp_id, reply.get("body", ""),
+                 reply.get("subject", ""), reply.get("message_id", ""),
+                 ai_draft.get("body_text", ""), ai_draft.get("subject", "")),
+            )
+            draft_id = cur.lastrowid
+            db.commit()
+
+            # WeCom push notification
+            if sp["wework_userid"]:
+                # Extract company name from context
+                company_name = "客户"
+                for line in context.split("\n"):
+                    if line.startswith("company_name:"):
+                        company_name = line.split(":", 1)[1].strip()
+                        break
+
+                try:
+                    send_reply_card(
+                        wework_userid=sp["wework_userid"],
+                        customer_name=company_name,
+                        original_snippet=reply.get("body", "")[:150],
+                        draft_snippet=ai_draft.get("body_text", "")[:200],
+                        draft_id=draft_id,
+                    )
+                except Exception as e:
+                    logger.error("WeCom notification failed: %s", e)
+
+            total_processed += 1
+
+    return {"total_processed": total_processed}

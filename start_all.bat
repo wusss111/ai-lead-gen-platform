@@ -24,6 +24,7 @@ echo.
 echo [3/4] Starting RQ Worker - inquiry_mail...
 start "RQ-Mail" cmd /c "set PYTHONPATH=%ROOT% && rq worker -u redis://127.0.0.1:6379/0 inquiry_mail:default"
 start "RQ-Mail-Send" cmd /c "set PYTHONPATH=%ROOT% && rq worker -u redis://127.0.0.1:6379/0 inquiry_mail:send"
+REM IMAP 回信监控由 Web 进程自动调度（每60秒），无需额外 Worker
 ping -n 1 127.0.0.1 >nul
 echo   Mail workers started
 echo.

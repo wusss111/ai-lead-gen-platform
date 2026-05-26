@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>回复编辑 - {{ draft.company_name }}</title>
+  <link rel="stylesheet" href="/static/inquiry-mail/css/reply.css?v=1" />
+</head>
+<body>
+  <div class="reply-editor">
+    <div class="editor-header">
+      <a href="javascript:history.back()" class="back-btn">&larr;</a>
+      <div>
+        <div class="editor-title">回复 {{ draft.company_name }}</div>
+        <div class="editor-sub">客户: {{ draft.contact_name or 'N/A' }} · {{ draft.country_region }}</div>
+      </div>
+    </div>
+
+    <div class="editor-info-callout">
+      <strong>客户原文</strong>
+      <p>{{ draft.original_body[:500] }}</p>
+    </div>
+
+    <div class="editor-form">
+      <label>
+        <span>主题</span>
+        <input type="text" id="subject" value="{{ draft.draft_subject }}" />
+      </label>
+      <label>
+        <span>内容</span>
+        <textarea id="body" rows="12">{{ draft.draft_body }}</textarea>
+      </label>
+      <div class="editor-actions">
+        <button id="btnSend" class="btn-send">确认发送</button>
+        <button id="btnSave" class="btn-save">保存草稿</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const DRAFT_ID = {{ draft.id }};
+
+    async function saveDraft() {
+      const fd = new FormData();
+      fd.set('draft_subject', document.getElementById('subject').value);
+      fd.set('draft_body', document.getElementById('body').value);
+      const r = await fetch('/inquiry-mail/api/replies/' + DRAFT_ID, { method: 'PUT', body: fd });
+      if (r.ok) { alert('已保存'); } else { alert('保存失败'); }
+    }
+
+    async function approveAndSend() {
+      if (!confirm('确认发送此回复？')) return;
+      const r = await fetch('/inquiry-mail/api/replies/' + DRAFT_ID + '/approve', { method: 'POST' });
+      const d = await r.json();
+      if (d.status === 'sent') { alert('发送成功！'); location.reload(); }
+      else { alert('发送失败: ' + (d.error || 'unknown')); }
+    }
+
+    document.getElementById('btnSave').onclick = saveDraft;
+    document.getElementById('btnSend').onclick = approveAndSend;
+  </script>
+</body>
+</html>

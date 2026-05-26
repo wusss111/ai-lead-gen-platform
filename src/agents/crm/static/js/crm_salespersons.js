@@ -2,15 +2,18 @@
 import { apiFetch } from '/static/js/api.js';
 import { showToast } from '/static/js/utils.js';
 
+let _salespersonList = [];
+
 // ---- Load table ----
 async function loadTable() {
   const tbody = document.getElementById('tableBody');
   try {
     const r = await apiFetch('/crm/api/salespersons');
-    if (!r.ok) { tbody.innerHTML = '<tr><td colspan="6" class="empty-state">加载失败</td></tr>'; return; }
+    if (!r.ok) { tbody.innerHTML = '<tr><td colspan="7" class="empty-state">加载失败</td></tr>'; return; }
     const list = await r.json();
+    _salespersonList = list;
     if (!list.length) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">暂无销售人员，点击"添加销售"开始</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">暂无销售人员，点击"添加销售"开始</td></tr>';
       return;
     }
     tbody.innerHTML = list.map(s => `
@@ -18,17 +21,18 @@ async function loadTable() {
         <td><strong>${esc(s.name)}</strong></td>
         <td>${esc(s.email) || '-'}</td>
         <td>${esc(s.phone) || '-'}</td>
+        <td>${s.smtp_username ? esc(s.smtp_username) : '<span style="color:var(--text-muted)">未绑定</span>'}</td>
         <td>${s.customer_count || 0}</td>
         <td>${s.is_active ? '<span class="badge badge-green">在职</span>' : '<span class="badge badge-gray">停用</span>'}</td>
         <td style="display:flex; gap:0.35rem; flex-wrap:wrap">
-          <button class="btn-small" onclick="editSalesperson(${s.id}, '${escJs(s.name)}', '${escJs(s.email)}', '${escJs(s.phone)}')">编辑</button>
+          <button class="btn-small" onclick="editSalesperson(${s.id})">编辑</button>
           <button class="btn-small" onclick="toggleActive(${s.id}, ${s.is_active ? 0 : 1})">${s.is_active ? '停用' : '启用'}</button>
           <button class="btn-small btn-danger" onclick="deleteSalesperson(${s.id}, '${escJs(s.name)}')">删除</button>
         </td>
       </tr>
     `).join('');
   } catch (e) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty-state">加载异常</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">加载异常</td></tr>';
   }
 }
 
@@ -51,15 +55,31 @@ window.showAddModal = function () {
   document.getElementById('spName').value = '';
   document.getElementById('spEmail').value = '';
   document.getElementById('spPhone').value = '';
+  document.getElementById('spSmtpHost').value = '';
+  document.getElementById('spSmtpPort').value = '587';
+  document.getElementById('spSmtpUser').value = '';
+  document.getElementById('spSmtpPass').value = '';
+  document.getElementById('spImapHost').value = '';
+  document.getElementById('spImapPort').value = '993';
+  document.getElementById('spWeworkUserid').value = '';
   document.getElementById('spModal').style.display = 'flex';
 };
 
-window.editSalesperson = function (id, name, email, phone) {
+window.editSalesperson = function (id) {
+  const sp = _salespersonList.find(s => s.id === id);
+  if (!sp) { showToast('未找到该销售人员', 'error'); return; }
   document.getElementById('modalTitle').textContent = '编辑销售';
-  document.getElementById('spId').value = id;
-  document.getElementById('spName').value = name;
-  document.getElementById('spEmail').value = email === '-' ? '' : email;
-  document.getElementById('spPhone').value = phone === '-' ? '' : phone;
+  document.getElementById('spId').value = sp.id;
+  document.getElementById('spName').value = sp.name;
+  document.getElementById('spEmail').value = sp.email || '';
+  document.getElementById('spPhone').value = sp.phone || '';
+  document.getElementById('spSmtpHost').value = sp.smtp_host || '';
+  document.getElementById('spSmtpPort').value = sp.smtp_port || 587;
+  document.getElementById('spSmtpUser').value = sp.smtp_username || '';
+  document.getElementById('spSmtpPass').value = sp.smtp_password || '';
+  document.getElementById('spImapHost').value = sp.imap_host || '';
+  document.getElementById('spImapPort').value = sp.imap_port || 993;
+  document.getElementById('spWeworkUserid').value = sp.wework_userid || '';
   document.getElementById('spModal').style.display = 'flex';
 };
 
@@ -76,6 +96,13 @@ window.saveSalesperson = async function () {
   fd.append('name', name);
   fd.append('email', document.getElementById('spEmail').value.trim());
   fd.append('phone', document.getElementById('spPhone').value.trim());
+  fd.append('smtp_host', document.getElementById('spSmtpHost').value.trim());
+  fd.append('smtp_port', document.getElementById('spSmtpPort').value);
+  fd.append('smtp_username', document.getElementById('spSmtpUser').value.trim());
+  fd.append('smtp_password', document.getElementById('spSmtpPass').value);
+  fd.append('imap_host', document.getElementById('spImapHost').value.trim());
+  fd.append('imap_port', document.getElementById('spImapPort').value);
+  fd.append('wework_userid', document.getElementById('spWeworkUserid').value.trim());
 
   const method = id ? 'PUT' : 'POST';
   const url = id ? '/crm/api/salespersons/' + id : '/crm/api/salespersons';
