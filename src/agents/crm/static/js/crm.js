@@ -1,6 +1,6 @@
 // crm.js — Customer list with batch assignment + smart search + read tracking
 import { apiFetch } from '/static/js/api.js';
-import { badgeForRecommendation, badgeForReview, badgeForEmailStatus, badgeForReadStatus, showToast } from '/static/js/utils.js';
+import { badgeForRecommendation, badgeForReview, badgeForEmailStatus, badgeForReadStatus, showToast, emailToggle, emailPick } from '/static/js/utils.js';
 
 // ==================== State ====================
 let searchTimer = null;
@@ -78,7 +78,7 @@ async function loadCustomers() {
   if (role) params.set('buyer_seller_role', role);
   if (pri) params.set('priority', pri);
   if (dq) params.set('data_quality', dq);
-  if (emailEmpty) params.set('email_empty', '1');
+  if (emailEmpty) params.set('email_empty', emailEmpty);
   if (from) params.set('created_from', from);
   if (to) params.set('created_to', to);
 
@@ -141,11 +141,46 @@ function renderStats() {
   el('statsRow').style.display = 'grid';
 }
 
+// ==================== Email Cell ====================
+let _emailDropdownOpen = null;
+let _emailCellId = 0;
+
+// Email dropdown: delegate to shared utils.js (fixes H5 — works on both crm and mail pages)
+window._emailToggle = emailToggle;
+window._emailPick = emailPick;
+
+function renderEmailCell(c) {
+  const primary = c.contact_email || '';
+  let allEmails = [];
+  try {
+    if (c.contact_emails_all) {
+      allEmails = JSON.parse(c.contact_emails_all);
+    }
+  } catch(_) {}
+
+  if (!primary && allEmails.length === 0) return '-';
+  if (allEmails.length <= 1) {
+    return '<span class="email-single" title="' + escAttr(primary) + '">' + (esc(primary) || '-') + '</span>';
+  }
+
+  var items = allEmails.map(function(e, i) {
+    var cls = e === primary ? ' email-selected' : '';
+    var star = i === 0 ? ' <small style=\"color:var(--text-muted)\">(推荐)</small>' : '';
+    return '<div class=\"email-item' + cls + '\" onclick=\"window._emailPick(this,\'' + escAttr(e) + '\')\">' + esc(e) + star + '</div>';
+  }).join('');
+
+  return '<div class=\"email-cell\" onclick=\"event.stopPropagation()\">' +
+    '<span class=\"email-primary\" title=\"' + escAttr(primary) + '\">' + esc(primary) + '</span>' +
+    '<span class=\"email-toggle\" onclick=\"window._emailToggle(this)\">▾</span>' +
+    '<div class=\"email-dropdown\">' + items + '</div>' +
+    '</div>';
+}
+
 // ==================== Table ====================
 function renderTable(customers) {
   const tbody = el('tableBody');
   if (!customers.length) {
-    tbody.innerHTML = `<tr><td colspan="11" class="empty-cell">
+    tbody.innerHTML = `<tr><td colspan="12" class="empty-cell">
       <div class="empty-icon">&#128269;</div><p>无匹配记录</p><p style="font-size:0.78rem;margin-top:0.25rem">尝试调整筛选条件或<a href="/customer-eval/">导入新客户</a></p>
     </td></tr>`;
     return;
@@ -160,7 +195,8 @@ function renderTable(customers) {
       <td class="col-company"><a href="/crm/${c.id}" title="${escAttr(c.company_name || '')}">${esc(c.company_name) || '-'}</a></td>
       <td class="col-country" title="${escAttr(c.country_region || '')}"><span class="country-flag">${esc(c.country_region) || '-'}</span></td>
       <td class="col-contact" title="${escAttr(c.contact_name || '')}">${esc(c.contact_name) || '-'}</td>
-      <td class="col-email" style="font-family:var(--font-mono);font-size:0.78rem" title="${escAttr(c.contact_email || '')}">${esc(c.contact_email) || '-'}</td>
+      <td class="col-email">${renderEmailCell(c)}</td>
+      <td class="col-phone">${esc(c.contact_phone) || '-'}</td>
       <td class="col-score"><strong>${c.overall_score_computed != null ? c.overall_score_computed.toFixed(1) : '-'}</strong></td>
       <td class="col-rec">${badgeForRecommendation(c.deal_recommendation)}</td>
       <td class="col-review">${badgeForReview(c.manual_review_flag)}</td>
@@ -414,19 +450,19 @@ window.doSmartSearch = async function () {
     if (!r.ok) {
       const txt = await r.text();
       showToast('搜索失败: ' + txt.slice(0, 200), 'error');
-      return;
-    }
-    const data = await r.json();
-    if (expl && data.explanation) expl.textContent = data.explanation;
-    if (data.customers && data.customers.length > 0) {
-      currentCustomers = data.customers;
-      renderTable(data.customers);
-      el('pagination').style.display = 'none';
-      updateStats(data.count || data.customers.length);
-      showToast('找到 ' + data.count + ' 条结果', 'info');
-      closeSmartSearch();
     } else {
-      showToast('未找到匹配结果，请换个说法试试', 'info');
+      const data = await r.json();
+      if (expl && data.explanation) expl.textContent = data.explanation;
+      if (data.customers && data.customers.length > 0) {
+        currentCustomers = data.customers;
+        renderTable(data.customers);
+        el('pagination').style.display = 'none';
+        updateStats(data.count || data.customers.length);
+        showToast('找到 ' + data.count + ' 条结果', 'info');
+        closeSmartSearch();
+      } else {
+        showToast('未找到匹配结果，请换个说法试试', 'info');
+      }
     }
   } catch (e) {
     console.error('doSmartSearch error:', e);

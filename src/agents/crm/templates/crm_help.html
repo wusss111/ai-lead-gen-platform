@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}业务员邮箱绑定教程 - 外贸客户平台{% endblock %}
+
+{% block head_extra %}
+<style>
+  .tutorial { max-width: 860px; margin: 0 auto; }
+  .tutorial h1 { font-size: 1.6rem; margin-bottom: 0.3rem; }
+  .tutorial .subtitle { color: var(--text-muted); margin-bottom: 1.5rem; }
+  .step {
+    background: var(--bg-card); border: 1px solid var(--border-input);
+    border-radius: var(--radius); padding: 1.5rem 1.8rem; margin-bottom: 1.2rem;
+    border-left: 4px solid var(--color-accent);
+  }
+  .step.completed { border-left-color: var(--color-success); }
+  .step h3 { margin: 0 0 0.8rem 0; font-size: 1.05rem; display: flex; align-items: center; gap: 0.6rem; }
+  .step .badge-step {
+    background: var(--color-accent); color: #fff; border-radius: 50%;
+    width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
+    font-size: 0.85rem; font-weight: 700; flex-shrink: 0;
+  }
+  .step .desc { color: var(--text-secondary); font-size: 0.9rem; line-height: 1.7; }
+  .step .desc a { color: var(--color-accent); }
+  .step .desc code {
+    background: var(--bg-input); padding: 0.15rem 0.4rem; border-radius: 3px;
+    font-size: 0.85rem; font-family: var(--font-mono, Consolas, monospace);
+  }
+  .step img { max-width: 100%; border: 1px solid var(--border-input); border-radius: var(--radius-sm); margin: 0.6rem 0; }
+  .checklist { margin: 0.8rem 0; padding-left: 1.2rem; }
+  .checklist li { margin-bottom: 0.3rem; }
+  .note {
+    background: rgba(255,193,7,0.1); border: 1px solid rgba(255,193,7,0.3);
+    border-radius: var(--radius-sm); padding: 0.8rem 1rem; margin: 0.8rem 0;
+    font-size: 0.85rem; color: var(--text-secondary);
+  }
+  .danger { background: rgba(239,71,111,0.08); border-color: rgba(239,71,111,0.2); }
+  .field-table { width: 100%; border-collapse: collapse; margin: 0.8rem 0; font-size: 0.85rem; }
+  .field-table th, .field-table td {
+    padding: 0.45rem 0.7rem; text-align: left; border-bottom: 1px solid var(--border-input);
+  }
+  .field-table th { color: var(--text-muted); font-weight: 600; font-size: 0.8rem; }
+  .btn-row { display: flex; gap: 0.6rem; margin-top: 1.2rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="tutorial">
+
+  <h1>业务员邮箱绑定教程</h1>
+  <p class="subtitle">完整的绑定流程，从添加销售到测试发信，一步步跟着做。</p>
+
+  <!-- Step 1 -->
+  <div class="step">
+    <h3><span class="badge-step">1</span> 添加/编辑业务员信息</h3>
+    <div class="desc">
+      <p>打开 <a href="/crm/salespersons">销售管理页面</a>，点击 <strong>"+ 添加销售"</strong>，填写基本信息：</p>
+      <table class="field-table">
+        <tr><th>字段</th><th>说明</th><th>示例</th></tr>
+        <tr><td>姓名</td><td>业务员姓名</td><td>张三</td></tr>
+        <tr><td>邮箱</td><td>业务员的 Gmail 地址</td><td>zhangsan@gmail.com</td></tr>
+        <tr><td>电话</td><td>可选</td><td>—</td></tr>
+      </table>
+      <p>展开 <strong>"邮箱绑定（可选）"</strong>，Gmail 用户只需确认默认值：</p>
+      <table class="field-table">
+        <tr><th>字段</th><th>Gmail 标准值</th><th>必须改吗</th></tr>
+        <tr><td>SMTP 服务器</td><td><code>smtp.gmail.com</code></td><td>不用</td></tr>
+        <tr><td>SMTP 端口</td><td><code>587</code></td><td>不用</td></tr>
+        <tr><td>SMTP 账号</td><td>同邮箱地址</td><td>填上邮箱</td></tr>
+        <tr><td>SMTP 密码</td><td>留空（用 OAuth 不需要）</td><td>不用</td></tr>
+        <tr><td>IMAP 服务器</td><td><code>imap.gmail.com</code></td><td>不用</td></tr>
+        <tr><td>IMAP 端口</td><td><code>993</code></td><td>不用</td></tr>
+      </table>
+      <p>点 <strong>"保存"</strong>。</p>
+    </div>
+  </div>
+
+  <!-- Step 2 -->
+  <div class="step">
+    <h3><span class="badge-step">2</span> Gmail 邮箱开启两步验证</h3>
+    <div class="desc">
+      <p>Google OAuth 授权<strong>必须先开启两步验证</strong>。用业务员的 Gmail 账号登录 Google：</p>
+      <ol>
+        <li>打开 <a href="https://myaccount.google.com/signinoptions/two-step-verification" target="_blank" rel="noopener">Google 两步验证设置</a></li>
+        <li>点击 <strong>"开始使用"</strong> → 按提示完成设置（短信或 Authenticator App）</li>
+        <li>开启后状态显示"已启用"即完成</li>
+      </ol>
+
+      <div class="note">
+        <strong>提示：</strong>这一步只需要做一次。如果之前开启过两步验证，可以跳过。
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 3 -->
+  <div class="step">
+    <h3><span class="badge-step">3</span> Gmail 授权（最关键的步骤）</h3>
+    <div class="desc">
+      <p>回到 <a href="/crm/salespersons">销售管理页面</a>，找到对应业务员那一行，点击 <strong>"Gmail 授权"</strong> 按钮。</p>
+      <ol>
+        <li>弹出确认框，点击确定</li>
+        <li>浏览器会自动打开 Google 授权页面</li>
+        <li><strong style="color: var(--color-danger)">重要：用业务员自己的 Gmail 邮箱登录！</strong></li>
+        <li>Google 会提示"此应用未经 Google 验证" — 这是正常的，点击 <strong>"继续"</strong> 或 <strong>"高级" → "前往 xxx（不安全）"</strong></li>
+        <li>勾选"允许发送邮件"权限，点击 <strong>"继续"</strong></li>
+        <li>看到"授权成功"后关闭页面</li>
+      </ol>
+
+      <div class="note danger">
+        <strong>常见错误：</strong>很多人会误用自己的 Google 账号登录。请确保弹出授权页面后，<strong>登出当前账号</strong>，然后用<strong>业务员自己的邮箱</strong>重新登录。
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 4 -->
+  <div class="step">
+    <h3><span class="badge-step">4</span> 验证授权状态</h3>
+    <div class="desc">
+      <p>授权完成后，回到销售管理页面刷新，对应业务员的<strong>"Gmail 授权"</strong>列应显示：</p>
+      <p><span style="display:inline-block;background:#28a74520;color:#28a745;padding:0.15rem 0.6rem;border-radius:3px;font-size:0.85rem;font-weight:600">已授权</span></p>
+      <p>如果显示"未授权"，说明上一步操作有问题，请重试。</p>
+    </div>
+  </div>
+
+  <!-- Step 5 -->
+  <div class="step">
+    <h3><span class="badge-step">5</span> 测试发信</h3>
+    <div class="desc">
+      <p>有两种方式验证配置是否正确：</p>
+      <p><strong>方式一（推荐）：</strong>在 <a href="/inquiry-mail">邮件询盘</a> 页面正常走一遍流程：</p>
+      <ol>
+        <li>勾选客户 → 生成邮件 → 确认邮件</li>
+        <li>勾选已确认 → 点"发送选中邮件"</li>
+        <li>检查业务员邮箱的发件箱是否有邮件</li>
+      </ol>
+      <p><strong>方式二：</strong>点下面按钮让我帮你测试发信：</p>
+      <div id="testResult" style="margin-top:0.6rem"></div>
+      <button id="btnTestAll" class="btn-accent" onclick="testAll()" style="font-size:0.85rem;padding:0.5rem 1rem">
+        测试所有业务员发信
+      </button>
+    </div>
+  </div>
+
+  <!-- Quick Reference -->
+  <div class="step" style="border-left-color: var(--text-muted)">
+    <h3>快速参考</h3>
+    <div class="desc">
+      <table class="field-table">
+        <tr><th>环节</th><th>网址</th><th>做什么</th></tr>
+        <tr><td>添加业务员</td><td><a href="/crm/salespersons">/crm/salespersons</a></td><td>填基本信息 + 保存</td></tr>
+        <tr><td>两步验证</td><td><a href="https://myaccount.google.com/signinoptions/two-step-verification" target="_blank">myaccount.google.com</a></td><td>开启 Gmail 两步验证</td></tr>
+        <tr><td>Gmail 授权</td><td><a href="/crm/salespersons">/crm/salespersons</a></td><td>点"Gmail 授权"→ 用业务员邮箱登录</td></tr>
+        <tr><td>测试发信</td><td><a href="/inquiry-mail">/inquiry-mail</a></td><td>生成并发送测试邮件</td></tr>
+      </table>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function testAll() {
+  const btn = document.getElementById('btnTestAll');
+  const result = document.getElementById('testResult');
+  btn.disabled = true;
+  btn.textContent = '测试中...';
+  result.innerHTML = '<p style="color:var(--text-muted)">正在测试...</p>';
+
+  try {
+    const r = await fetch('/crm/api/salespersons/test-send', { method: 'POST' });
+    const data = await r.json();
+    let html = '';
+    if (data.results && data.results.length > 0) {
+      html = '<table class="field-table" style="margin-top:0.5rem"><tr><th>业务员</th><th>邮箱</th><th>结果</th></tr>';
+      for (const item of data.results) {
+        const ok = item.success;
+        html += '<tr><td>' + esc(item.name) + '</td><td>' + esc(item.email) + '</td>' +
+          '<td style="color:' + (ok ? 'var(--color-success)' : 'var(--color-danger)') + '">' +
+          (ok ? '发送成功' : esc(item.error || '失败')) + '</td></tr>';
+      }
+      html += '</table>';
+    } else {
+      html = '<p style="color:var(--text-muted)">没有已授权 Gmail 的业务员</p>';
+    }
+    result.innerHTML = html;
+  } catch(e) {
+    result.innerHTML = '<p style="color:var(--color-danger)">测试失败: ' + esc(e.message) + '</p>';
+  }
+  btn.disabled = false;
+  btn.textContent = '测试所有业务员发信';
+}
+function esc(s) { const d = document.createElement('div'); d.textContent = String(s); return d.innerHTML; }
+</script>
+{% endblock %}

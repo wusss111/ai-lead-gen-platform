@@ -41,6 +41,17 @@ def salespersons_page(request: Request):
     }))
 
 
+@router.get("/salespersons/help", response_class=HTMLResponse)
+def salespersons_help_page(request: Request):
+    from src.core.app import app
+    t = app.state.jinja_env.get_template("crm_help.html")
+    return HTMLResponse(t.render({
+        "request": request,
+        "nav_agents": app.state.nav_agents,
+        "active_agent": "crm",
+    }))
+
+
 @router.get("/{customer_id}", response_class=HTMLResponse)
 def crm_detail_page(customer_id: int, request: Request):
     from src.core.app import app
@@ -481,6 +492,27 @@ def gmail_auth_status(sp_id: int, _: Annotated[None, Depends(require_auth)]) -> 
     from tools.gmail_sender import has_token
     ok = has_token(sp_id)
     return JSONResponse({"authorized": ok})
+
+
+@router.post("/api/salespersons/test-send")
+def test_send_all_salespersons(_: Annotated[None, Depends(require_auth)]) -> JSONResponse:
+    """Send a test email via Gmail API for each salesperson with a token."""
+    from tools.gmail_sender import send_single_email, has_token
+    db = get_db()
+    sps = db.execute("SELECT id, name, email FROM salesperson WHERE is_active=1 AND email != ''").fetchall()
+    results = []
+    for sp in sps:
+        if has_token(sp["id"]):
+            r = send_single_email(
+                to_email=sp["email"],
+                subject="[测试] 外贸平台发信测试 - " + sp["name"],
+                body_text="这是一封测试邮件，验证业务员「" + sp["name"] + "」的 Gmail 发信配置是否正确。",
+                salesperson_id=sp["id"],
+            )
+            results.append({"name": sp["name"], "email": sp["email"], "success": r["success"], "error": r.get("error")})
+        else:
+            results.append({"name": sp["name"], "email": sp["email"], "success": False, "error": "未授权 Gmail"})
+    return JSONResponse({"results": results})
 
 
 # ---- Customer assignment ----

@@ -61,7 +61,22 @@
       <h4>联系信息</h4>
       <dl>
         <dt>联系人</dt><dd>{{ customer.contact_name or '-' }}</dd>
-        <dt>邮箱</dt><dd>{{ customer.contact_email or '-' }}</dd>
+        <dt>邮箱</dt>
+        <dd>
+          {% if customer.emails_all and customer.emails_all|length > 1 %}
+          <div class="email-cell-detail">
+            <span>{{ customer.contact_email or customer.emails_all[0] }}</span>
+            <span class="email-toggle-detail" onclick="var dd=this.nextElementSibling;dd.style.display=dd.style.display==='block'?'none':'block'">▾</span>
+            <div class="email-dropdown-detail" style="display:none">
+              {% for e in customer.emails_all %}
+              <div class="email-item-detail{% if e == customer.contact_email %} selected{% endif %}">{{ e }}{% if loop.first %} <small>(推荐)</small>{% endif %}</div>
+              {% endfor %}
+            </div>
+          </div>
+          {% else %}
+          {{ customer.contact_email or '-' }}
+          {% endif %}
+        </dd>
         <dt>电话</dt><dd>{{ customer.contact_phone or '-' }}</dd>
         <dt>地址</dt><dd>{{ customer.contact_address or '-' }}</dd>
       </dl>

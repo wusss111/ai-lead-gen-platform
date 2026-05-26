@@ -2,7 +2,7 @@
 {% block title %}客户资源 - 外贸客户平台{% endblock %}
 
 {% block head_extra %}
-<link rel="stylesheet" href="/static/crm/css/crm.css" />
+<link rel="stylesheet" href="/static/crm/css/crm.css?v=4" />
 {% endblock %}
 
 {% block content %}
@@ -113,9 +113,10 @@
           </select>
         </div>
         <div class="advanced-field">
-          <label>邮箱为空</label>
+          <label>邮箱</label>
           <select id="afEmailEmpty" class="af-select" onchange="reloadCustomers()">
             <option value="">全部</option>
+            <option value="0">有邮箱</option>
             <option value="1">无邮箱</option>
           </select>
         </div>
@@ -174,6 +175,7 @@
           <th class="col-country">国家</th>
           <th class="col-contact">联系人</th>
           <th class="col-email">邮箱</th>
+          <th class="col-phone">电话</th>
           <th class="col-score">综合分</th>
           <th class="col-rec">推荐</th>
           <th class="col-review">复核</th>
@@ -183,7 +185,7 @@
         </tr>
       </thead>
       <tbody id="tableBody">
-        <tr><td colspan="11" class="empty-cell"><div class="empty-icon">&#128269;</div><p>加载中...</p></td></tr>
+        <tr><td colspan="12" class="empty-cell"><div class="empty-icon">&#128269;</div><p>加载中...</p></td></tr>
       </tbody>
     </table>
   </div>
@@ -213,5 +215,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script type="module" src="/static/crm/js/crm.js"></script>
+<script type="module" src="/static/crm/js/crm.js?v=4"></script>
 {% endblock %}
