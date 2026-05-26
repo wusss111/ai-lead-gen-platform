@@ -230,17 +230,30 @@ function updateProgress(j, status) {
   }
   const cur = Number(p.current) || 0;
   const tot = Number(p.total) || 0;
-  let pct = 0;
   const phase = p.phase || '';
-  if (phase === 'write' || phase === 'done') pct = 100;
-  else if (tot > 0) {
+  let pct = 0;
+
+  if (phase === 'write' || phase === 'done') {
+    pct = 100;
+  } else if (phase === 'prefetch') {
+    // 预抓取阶段：cur=0 表示抓取中，cur=1 表示完成
+    pct = cur > 0 ? 15 : 8;
+  } else if (tot > 0) {
     pct = Math.min(99, Math.round((100 * cur) / tot));
-    // 大批量时前几行 pct 会四舍五入成 0，至少显示 1% 避免看起来卡住
     if (cur > 0 && pct < 1) pct = 1;
+    // 预抓取已完成，进度从 15% 开始计
+    if (pct < 15) pct = 15;
+    pct = Math.min(99, pct);
   }
-  const label = (p.label || p.message || phase) + (tot ? ' · ' + cur + '/' + tot + ' 行' : '');
+
+  let label;
+  if (phase === 'prefetch') {
+    label = cur > 0 ? (p.message || '网站抓取完成') : '并行抓取网站中...';
+  } else {
+    label = (p.label || p.message || phase) + (tot > 1 ? ' · ' + cur + '/' + tot + ' 行' : '');
+  }
   updateBar(pct, label, phaseLabel(phase));
-  updatePhaseStepper(phase, cur, tot);
+  updatePhaseStepper(phase, cur, tot, p);
 }
 
 function updateBar(pct, label, phase) {
@@ -249,7 +262,7 @@ function updateBar(pct, label, phase) {
   progressPct.textContent = pct + '%';
 }
 
-	const _PHASE_ORDER = ['ready', 'fetch', 'eval', 'write', 'done'];
+	const _PHASE_ORDER = ['ready', 'prefetch', 'fetch', 'eval', 'write', 'done'];
 let _procStartTs = 0;
 let _lastActivePhase = '';
 
@@ -263,8 +276,11 @@ function _fmtTime(sec) {
 function updatePhaseStepper(phase, cur, tot) {
   if (!el('phaseStepper')) return;
   const now = Date.now();
-  if (!_procStartTs && (cur > 0 || phase === 'fetch' || phase === 'eval')) _procStartTs = now;
-  const activePhase = (phase === 'fetch' || phase === 'eval') ? 'fetch' : phase;
+  if (!_procStartTs && (cur > 0 || phase === 'prefetch' || phase === 'fetch' || phase === 'eval')) _procStartTs = now;
+
+  // 确定激活的步骤：prefetch 激活第一步，fetch/eval 激活第二步
+  let activePhase = phase;
+  if (phase === 'fetch' || phase === 'eval') activePhase = 'eval';
   const idx = _PHASE_ORDER.indexOf(activePhase);
   if (idx < 0) return;
 
@@ -283,39 +299,53 @@ function updatePhaseStepper(phase, cur, tot) {
     if (prevStep && prevStep.classList.contains('done')) line.classList.add('done');
   });
 
-  const fetchStat = el('phaseStat-fetch');
+  const pfStat = el('phaseStat-prefetch');
   const evalStat = el('phaseStat-eval');
 
   if (phase === 'done' || phase === 'write') {
-    if (fetchStat) { fetchStat.classList.add('done'); fetchStat.textContent = tot + '/' + tot + ' 已完成'; }
-    if (evalStat) { evalStat.classList.add('done'); evalStat.textContent = '已完成'; }
+    if (pfStat) { pfStat.classList.add('done'); pfStat.textContent = '已完成'; }
+    if (evalStat) { evalStat.classList.add('done'); evalStat.textContent = tot + ' 行完成'; }
     const elapsed = _procStartTs ? (now - _procStartTs) / 1000 : 0;
-    if (fetchStat && elapsed > 0) fetchStat.textContent = tot + '/' + tot + ' · 耗时' + _fmtTime(elapsed);
+    if (el('phaseStat-write')) {
+      el('phaseStat-write').textContent = elapsed > 0 ? '耗时 ' + _fmtTime(elapsed) : '已完成';
+    }
     return;
   }
 
   if (phase === 'ready') {
-    if (fetchStat) fetchStat.textContent = '准备中...';
+    if (pfStat) pfStat.textContent = '准备中...';
     if (evalStat) evalStat.textContent = '等待中';
     return;
   }
 
+  // Phase: prefetch
+  if (phase === 'prefetch') {
+    if (cur > 0) {
+      if (pfStat) { pfStat.classList.add('done'); pfStat.textContent = (p.message || '已完成'); }
+    } else {
+      if (pfStat) pfStat.textContent = '并行抓取中...';
+    }
+    if (evalStat) evalStat.textContent = '等待中';
+    return;
+  }
+
+  // Phase: fetch / eval — 并行评估进度
   if (tot > 0 && cur > 0) {
     const elapsed = _procStartTs ? (now - _procStartTs) / 1000 : 1;
     const rate = cur / Math.max(1, elapsed);
     const remaining = Math.max(0, tot - cur);
     const eta = rate > 0 ? remaining / rate : 0;
-    if (fetchStat) fetchStat.textContent = cur + '/' + tot + ' · 约剩' + _fmtTime(eta);
-    if (evalStat) evalStat.textContent = 'AI 评估中...';
+    if (pfStat) { pfStat.classList.add('done'); pfStat.textContent = '已完成'; }
+    if (evalStat) evalStat.textContent = cur + '/' + tot + ' · 约剩' + _fmtTime(eta);
   } else if (tot > 0) {
-    if (fetchStat) fetchStat.textContent = '0/' + tot + ' · 抓取网站中...';
-    if (evalStat) evalStat.textContent = '等待中';
+    if (pfStat) { pfStat.classList.add('done'); pfStat.textContent = '已完成'; }
+    if (evalStat) evalStat.textContent = '0/' + tot + ' · 准备中...';
   }
 }
 
 function phaseLabel(p) {
   const map = {
-    ready: '准备中', fetch: '逐行处理', eval: 'AI评估',
+    ready: '准备中', prefetch: '网站抓取', fetch: '逐行处理', eval: 'AI评估',
     classify: '处理中', write: '写入结果', done: '完成'
   };
   return map[p] || p;

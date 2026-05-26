@@ -552,6 +552,7 @@ def run_pipeline(
 
     # ══ 阶段 1：预抓取所有唯一网站 ══
     if not no_fetch:
+        report(phase="prefetch", current=0, total=1, message="正在并行抓取网站...")
         try:
             _prefetch_cache = _prefetch_all_websites(
                 df, start, end, no_fetch=no_fetch, cache_dir=cache,
@@ -559,6 +560,9 @@ def run_pipeline(
             )
         except _ControlExit:
             raise
+        ok_count = sum(1 for _, errs in _prefetch_cache.values() if not errs)
+        report(phase="prefetch", current=1, total=1,
+               message=f"网站抓取完成: {ok_count}/{len(_prefetch_cache)}")
     else:
         _prefetch_cache = {}
 

@@ -94,18 +94,18 @@
     <div class="eval-card" id="progressCard" style="display:none">
       <!-- 阶段步骤条 -->
 	      <div class="phase-stepper" id="phaseStepper">
-	        <div class="phase-step" data-phase="fetch">
+	        <div class="phase-step" data-phase="prefetch">
 	          <div class="phase-dot"><span class="phase-icon">&#127760;</span></div>
 	          <div class="phase-body">
-	            <span class="phase-name">逐行抓取 + 评估</span>
-	            <span class="phase-stat" id="phaseStat-fetch">等待中</span>
+	            <span class="phase-name">预抓取网站</span>
+	            <span class="phase-stat" id="phaseStat-prefetch">等待中</span>
 	          </div>
 	        </div>
 	        <div class="phase-line"></div>
 	        <div class="phase-step" data-phase="eval">
 	          <div class="phase-dot"><span class="phase-icon">&#129302;</span></div>
 	          <div class="phase-body">
-	            <span class="phase-name">AI 评估进度</span>
+	            <span class="phase-name">AI 并行评估</span>
 	            <span class="phase-stat" id="phaseStat-eval">等待中</span>
 	          </div>
 	        </div>
@@ -167,5 +167,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script type="module" src="/static/customer-eval/js/eval_main.js?v=20260526b"></script>
+<script type="module" src="/static/customer-eval/js/eval_main.js?v=20260526c"></script>
 {% endblock %}

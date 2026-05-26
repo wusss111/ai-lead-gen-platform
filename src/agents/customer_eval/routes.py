@@ -197,6 +197,24 @@ def continue_job(
     return JSONResponse({"job_id": job_id, "rq_job_id": rq_job.id, "status": "queued"})
 
 
+@router.get("/api/batches")
+def list_eval_batches(
+    config: Annotated[PlatformConfig, Depends(get_config)],
+    _: Annotated[None, Depends(require_auth)],
+) -> JSONResponse:
+    from src.core.database import get_db, dicts_from_rows
+    db = get_db()
+    rows = dicts_from_rows(
+        db.execute("SELECT * FROM evaluation_batch ORDER BY created_at DESC LIMIT 20").fetchall()
+    )
+    # 注入 RQ 真实状态，前端区分"运行中"和"真中断"
+    for r in rows:
+        rq_id_file = config.data_dir / "jobs" / r["id"] / "rq_job_id.txt"
+        info = get_rq_job_info(rq_id_file, config.redis_url)
+        r["rq_status"] = info.get("rq_status", "unknown")
+    return JSONResponse(rows)
+
+
 @router.get("/api/jobs/{job_id}")
 def get_job_status(
     job_id: str,
@@ -236,8 +254,16 @@ def cancel_job(
 ) -> JSONResponse:
     """Cancel a running evaluation job. Saves partial results before stopping."""
     from redis import Redis as _Redis
+    from src.core.database import get_db
     conn = _Redis.from_url(config.redis_url)
     conn.setex(f"job_control:{job_id}", 600, "cancel")
+    # 兜底：如果 Worker 已死，直接更新 DB 状态
+    db = get_db()
+    db.execute(
+        "UPDATE evaluation_batch SET status='cancelled' WHERE id=? AND status='started'",
+        (job_id,),
+    )
+    db.commit()
     logger.info("Cancel signal sent for job %s", job_id)
     return JSONResponse({"status": "ok", "message": "取消信号已发送，正在保存已处理数据..."})
 
@@ -254,6 +280,55 @@ def pause_job(
     conn.setex(f"job_control:{job_id}", 600, "pause")
     logger.info("Pause signal sent for job %s", job_id)
     return JSONResponse({"status": "ok", "message": "暂停信号已发送，正在保存进度..."})
+
+
+@router.post("/api/jobs/{job_id}/resume")
+def resume_job(
+    job_id: str,
+    _: Annotated[None, Depends(require_auth)],
+    config: Annotated[PlatformConfig, Depends(get_config)],
+) -> JSONResponse:
+    """恢复中断的评估任务（从断点继续）。"""
+    from src.core.database import get_db
+    db = get_db()
+    batch = db.execute(
+        "SELECT * FROM evaluation_batch WHERE id=? AND status='started'", (job_id,)
+    ).fetchone()
+    if not batch:
+        raise HTTPException(404, "该任务不是可恢复状态")
+
+    eval_cfg = CustomerEvalConfig.from_env()
+    job_dir = config.data_dir / "jobs" / job_id
+
+    # 检查是否已有活跃的 RQ job，避免重复入队
+    rq_id_file = job_dir / "rq_job_id.txt"
+    info = get_rq_job_info(rq_id_file, config.redis_url)
+    if info["rq_status"] in ("queued", "started"):
+        raise HTTPException(409, "任务已在运行中，无需重复恢复")
+
+    # Detect input format
+    inp_csv = job_dir / "input.csv"
+    inp_xlsx = job_dir / "input.xlsx"
+    input_ext = ".csv" if inp_csv.is_file() else ".xlsx"
+
+    queue = get_queue(config.redis_url, eval_cfg.queue_name)
+    rq_job = queue.enqueue(
+        run_eval_job,
+        job_id,
+        str(config.data_dir),
+        dry_run=False,
+        no_fetch=False,
+        start_row=batch["rows_completed"] or 0,
+        batch_size=None,
+        append_output=True,
+        input_ext=input_ext,
+        job_timeout=eval_cfg.job_timeout,
+        failure_ttl=eval_cfg.result_ttl,
+        result_ttl=eval_cfg.result_ttl,
+    )
+    (job_dir / "rq_job_id.txt").write_text(rq_job.id, encoding="utf-8")
+    logger.info("Resumed job_id=%s rq_id=%s from row %s", job_id, rq_job.id, batch["rows_completed"])
+    return JSONResponse({"status": "ok", "job_id": job_id, "rq_job_id": rq_job.id, "resume_from": batch["rows_completed"]})
 
 
 @router.get("/api/jobs/{job_id}/download")
