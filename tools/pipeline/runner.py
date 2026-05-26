@@ -817,12 +817,13 @@ def run_pipeline(
         with _row_done_lock:
             _row_done[0] += 1
             done = _row_done[0]
-        if done % 5 == 0 or done == n_batch:
-            report(phase="fetch", current=done, total=n_batch,
-                   message=f"逐行处理中 · 第 {done}/{n_batch} 行")
+        # 每行都报告进度，让前端实时看到变化
+        report(phase="fetch", current=done, total=n_batch,
+               message=f"第 {done}/{n_batch} 行")
 
     # ── 启动多线程处理 ──
-    report(phase="fetch", current=0, total=n_batch, message=f"开始逐行处理 ({_ROW_WORKERS} 线程并发)…")
+    report(phase="fetch", current=0, total=n_batch,
+           message=f"4 线程并发 · 0/{n_batch} 行")
     _cancel_flag[0] = False
 
     with ThreadPoolExecutor(max_workers=_ROW_WORKERS) as pool:
