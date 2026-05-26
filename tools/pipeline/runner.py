@@ -540,18 +540,27 @@ def run_pipeline(
         total=n_batch,
         message=f"第 {start + 1}-{end} 行（共 {n_total} 行），开始处理",
     )
-# ═══ 多线程逐行处理：抓取 → 评估 → 入库（每行独立，原子操作） ═══
-    _ROW_WORKERS = 4  # 并发处理行数
+# ═══ 两阶段并行处理 ═══
+# 阶段 1：预抓取所有网站（并行 I/O）→ 阶段 2：并行逐行评估 + 实时入库
+    _WORKERS = 4  # 并行 LLM 评估行数
     detail_rows: list[dict[str, Any]] = []
     _batch_evaluated: dict[tuple[str, str], dict[str, Any]] = {}  # B5 去重缓存
-    _batch_eval_lock = threading.Lock()
-    _df_lock = threading.Lock()
-    _detail_lock = threading.Lock()
+    _write_lock = threading.Lock()  # 单一锁保护所有共享状态（DF/DB/去重/详情/计数器）
     _cancel_flag = [False]
-    _cancel_lock = threading.Lock()
     _row_done = [0]
-    _row_done_lock = threading.Lock()
     _row_errors: list[str] = []
+
+    # ══ 阶段 1：预抓取所有唯一网站 ══
+    if not no_fetch:
+        try:
+            _prefetch_cache = _prefetch_all_websites(
+                df, start, end, no_fetch=no_fetch, cache_dir=cache,
+                control_callback=control_callback,
+            )
+        except _ControlExit:
+            raise
+    else:
+        _prefetch_cache = {}
 
     class _RowCtx:
         """一行评估所需的全部上下文。"""
@@ -561,7 +570,7 @@ def run_pipeline(
                      "country_region", "target_products", "row_notes")
 
     def _process_one_row(i: int) -> None:
-        """完整处理一行：抓取网站 → 分类筛选 → LLM 评估 → 入库。线程安全。"""
+        """完整处理一行：查预抓取缓存 → 分类筛选 → LLM 评估 → 入库。线程安全。"""
         if _cancel_flag[0]:
             return
         row = df.iloc[i]
@@ -572,7 +581,7 @@ def run_pipeline(
         ctx.eval_json_str = ""
 
         try:
-            # ══ 1. 抓取网站 ══
+            # ══ 1. 获取网站数据（从预抓取缓存读取，无需等待网络） ══
             name, name_inferred = _infer_company_name(row, meta=meta, row_index=i)
             ctx.name = name
             ctx.name_inferred = name_inferred
@@ -586,38 +595,39 @@ def run_pipeline(
             ctx.target_products = _cell(row.get("target_products", ""))
             ctx.row_notes = _cell(row.get("notes", ""))
 
-            fetch_errs: list[str] = []
-            pages: list[dict[str, Any]] = []
-
             if control_callback:
                 signal = control_callback()
                 if signal in ("cancel", "pause"):
-                    with _cancel_lock:
+                    with _write_lock:
                         _cancel_flag[0] = True
                     raise _ControlExit(signal, i)
 
             if no_fetch or not website.strip():
                 if not website.strip():
-                    fetch_errs.append("未提供 website")
+                    ctx.fetch_errs = ["未提供 website"]
+                ctx.pages = []
             else:
-                try:
-                    pages, fetch_errs = fetch_pages_for_website_field(website, cache_dir=cache)
-                except Exception as _fetch_exc:
-                    logger.exception("行 %d (%s) 网站抓取异常: %s", i + 1, name, website)
-                    pages = []
-                    fetch_errs = [f"网站抓取异常: {type(_fetch_exc).__name__}: {_fetch_exc}"]
-            ctx.pages = pages
-            ctx.fetch_errs = fetch_errs
+                cached = _prefetch_cache.get(website)
+                if cached is not None:
+                    ctx.pages, ctx.fetch_errs = cached
+                else:
+                    # 缓存未命中时兜底抓取（不应发生，除非预抓取跳过）
+                    try:
+                        ctx.pages, ctx.fetch_errs = fetch_pages_for_website_field(website, cache_dir=cache)
+                    except Exception as _fetch_exc:
+                        logger.exception("行 %d (%s) 网站抓取异常: %s", i + 1, name, website)
+                        ctx.pages = []
+                        ctx.fetch_errs = [f"网站抓取异常: {type(_fetch_exc).__name__}: {_fetch_exc}"]
 
-            scraped_blocks = [(f"抓取 URL: {p['url']}", str(p.get("text") or "")) for p in pages if p.get("ok")]
+            scraped_blocks = [(f"抓取 URL: {p['url']}", str(p.get("text") or "")) for p in ctx.pages if p.get("ok")]
             merged, was_truncated = merge_scrape_and_paste(scraped_blocks=scraped_blocks, evidence_paste=ctx.paste or None)
             if was_truncated:
                 ctx.err_parts.append("证据文本过长已截断，评估可能不完整")
             ctx.merged = merged
             ctx.notes_text = _cell(row.get("notes", ""))
-            ctx.any_fetch_ok = any(bool(p.get("ok")) for p in pages)
+            ctx.any_fetch_ok = any(bool(p.get("ok")) for p in ctx.pages)
             ctx.detail_block = _detail_merged_display(merged, ctx.notes_text)
-            ctx.base_err = "; ".join(fetch_errs) if fetch_errs else ""
+            ctx.base_err = "; ".join(ctx.fetch_errs) if ctx.fetch_errs else ""
             ctx.dedup_key = (name.strip().lower(), website.strip().lower())
 
         except _ControlExit:
@@ -641,8 +651,8 @@ def run_pipeline(
             ctx.dedup_key = (ctx.name.strip().lower(), ctx.website.strip().lower())
             ctx.err_parts.append(f"预处理异常: {type(_prep_exc).__name__}")
 
-        # ══ 2. 在线程安全的条件下立即写入基本信息 ══
-        with _df_lock:
+        # ══ 2. 立即写入基本信息（锁保护） ══
+        with _write_lock:
             df.at[i, "fetched_pages"] = _fmt_pages(ctx.pages)
             _backfill_social_from_pages(df, i, ctx.pages)
             df.at[i, "company_name"] = ctx.name
@@ -657,7 +667,7 @@ def run_pipeline(
         # B3: 无效公司名
         if ctx.name.startswith("未命名客户-") or not ctx.name.strip():
             ctx.err_parts.append("缺少有效公司名称，无法评估")
-            with _df_lock:
+            with _write_lock:
                 df.at[i, "product_fit_reasons"] = "说明：缺少有效公司名称，无法调用大模型评估。"
                 df.at[i, "errors"] = "; ".join([p for p in [ctx.base_err, *ctx.err_parts] if p])
                 df.at[i, "manual_review_flag"] = "YES"
@@ -667,14 +677,14 @@ def run_pipeline(
         elif not ctx.merged.strip() and not ctx.notes_text.strip() and not ctx.any_fetch_ok:
             ctx.err_parts.append(ctx.base_err or "无抓取文本且无 evidence_paste/notes")
 
-        # B5: 同公司去重
+        # B5: 同公司去重（检查+赋值必须在同一锁内完成）
         is_dup = False
-        with _batch_eval_lock:
+        with _write_lock:
             if ctx.dedup_key in _batch_evaluated and ctx.dedup_key != ("", ""):
                 prev_eval = _batch_evaluated[ctx.dedup_key]
                 is_dup = True
         if is_dup:
-            with _df_lock:
+            with _write_lock:
                 for _k, _v in prev_eval.items():
                     if _k in ("eval_json",):
                         df.at[i, _k] = _v
@@ -684,7 +694,6 @@ def run_pipeline(
                 df.at[i, "errors"] = "; ".join([p for p in [ctx.base_err, *ctx.err_parts, "复用同公司结果"] if p])
                 if row_save_callback:
                     row_save_callback(i, df.iloc[i], {"name": ctx.name, "inferred": ctx.name_inferred})
-            with _detail_lock:
                 if detail_sheet:
                     detail_rows.append({"row_index": i + 1, "company_name": ctx.name,
                                         "merged_evidence": ctx.detail_block, "eval_json": prev_eval.get("eval_json", "")})
@@ -696,19 +705,18 @@ def run_pipeline(
         if dry_run or (not ctx.merged.strip() and not ctx.notes_text.strip()):
             reason = "dry_run: 跳过 LLM" if dry_run else "无证据：跳过 LLM"
             ctx.err_parts.append(reason)
-            with _df_lock:
+            with _write_lock:
                 df.at[i, "product_fit_reasons"] = f"说明：{reason}。"
                 df.at[i, "errors"] = "; ".join([p for p in [ctx.base_err, *ctx.err_parts] if p])
                 if row_save_callback:
                     row_save_callback(i, df.iloc[i], {"name": ctx.name, "inferred": ctx.name_inferred})
-            with _detail_lock:
                 if detail_sheet:
                     detail_rows.append({"row_index": i + 1, "company_name": ctx.name,
                                         "merged_evidence": ctx.detail_block, "eval_json": ""})
             _mark_done()
             return
 
-        # ══ 4. LLM 评估（单行） ══
+        # ══ 4. LLM 评估（单行，无需锁 — 纯计算/IO） ══
         report(phase="eval", current=_row_done[0] + 1, total=n_batch,
                label=ctx.name[:120], message=f"AI 评估 {ctx.name[:30]} · 第 {_row_done[0] + 1}/{n_batch} 行")
 
@@ -729,17 +737,17 @@ def run_pipeline(
 
         ctx.eval_out = eval_out
 
-        # ══ 5. 后处理 + 写入 DB ══
+        # ══ 5. 后处理 + 写入 DB（锁保护） ══
         if "_error" in eval_out:
             logger.error("行 %d (%s) LLM 失败: %s", i + 1, ctx.name, eval_out["_error"])
             ctx.err_parts.append(f"LLM 失败: {eval_out['_error']}")
-            with _df_lock:
+            with _write_lock:
                 df.at[i, "product_fit_reasons"] = f"说明：LLM 评估失败（{eval_out['_error']}），已跳过。"
                 df.at[i, "errors"] = "; ".join([p for p in [ctx.base_err, *ctx.err_parts] if p])
                 if row_save_callback:
                     row_save_callback(i, df.iloc[i], {"name": ctx.name, "inferred": ctx.name_inferred})
             if stop_on_error:
-                with _cancel_lock:
+                with _write_lock:
                     _cancel_flag[0] = True
                 raise RuntimeError(f"行 {i + 1} LLM 评估失败: {eval_out['_error']}")
         else:
@@ -764,7 +772,7 @@ def run_pipeline(
                     weights=weights,
                 )
 
-                with _df_lock:
+                with _write_lock:
                     for _k, _v in flat.items():
                         df.at[i, _k] = _v
                     _backfill_contacts_from_pages(df, i, ctx.pages, df.iloc[i])
@@ -779,7 +787,6 @@ def run_pipeline(
                     if row_save_callback:
                         row_save_callback(i, df.iloc[i], {"name": ctx.name, "inferred": ctx.name_inferred})
 
-                with _batch_eval_lock:
                     _batch_evaluated[ctx.dedup_key] = {
                         "product_fit_score": int(eval_out["product_fit_score"]),
                         "product_fit_reasons": flat["product_fit_reasons"],
@@ -794,62 +801,85 @@ def run_pipeline(
                         "eval_json": ctx.eval_json_str,
                     }
 
-                with _detail_lock:
                     if detail_sheet:
                         detail_rows.append({"row_index": i + 1, "company_name": ctx.name,
                                             "merged_evidence": ctx.detail_block, "eval_json": ctx.eval_json_str})
             except Exception as e:
                 logger.exception("行 %d (%s) 后处理失败", i + 1, ctx.name)
                 ctx.err_parts.append(f"后处理失败: {type(e).__name__}: {e}")
-                with _df_lock:
+                with _write_lock:
                     df.at[i, "product_fit_reasons"] = f"说明：后处理失败（{type(e).__name__}），已跳过。"
                     df.at[i, "errors"] = "; ".join([p for p in [ctx.base_err, *ctx.err_parts] if p])
                     if row_save_callback:
                         row_save_callback(i, df.iloc[i], {"name": ctx.name, "inferred": ctx.name_inferred})
                 if stop_on_error:
-                    with _cancel_lock:
+                    with _write_lock:
                         _cancel_flag[0] = True
                     raise
 
         _mark_done()
 
     def _mark_done() -> None:
-        with _row_done_lock:
+        with _write_lock:
             _row_done[0] += 1
             done = _row_done[0]
         # 每行都报告进度，让前端实时看到变化
         report(phase="fetch", current=done, total=n_batch,
                message=f"第 {done}/{n_batch} 行")
-    # ── 逐行串行处理 ──
+
+    # ── 阶段 2：并行逐行处理（4 线程） ──
     report(phase="fetch", current=0, total=n_batch,
            message=f"0/{n_batch} 行")
     _cancel_flag[0] = False
 
-    for i in range(start, end):
-        if _cancel_flag[0]:
-            break
-        if control_callback:
-            signal = control_callback()
-            if signal in ("cancel", "pause"):
-                with _cancel_lock:
-                    _cancel_flag[0] = True
-                report(phase="done", current=_row_done[0], total=n_batch,
-                       message=f"已{signal}", control=signal)
-                if batch_info_out is not None:
-                    batch_info_out.update({"total_rows": n_total, "batch_start_row": start,
-                                           "batch_end_exclusive": _row_done[0] + start,
-                                           "has_more": True, "control": signal})
-                if signal == "pause":
-                    _write_progress(output_path, _row_done[0] + start, n_total, batch_info_out)
-                raise _ControlExit(signal, _row_done[0] + start)
-        try:
-            _process_one_row(i)
-        except _ControlExit:
-            raise
-        except Exception as exc:
-            logger.exception("行 %d 处理异常: %%s", i + 1, exc)
-            if stop_on_error:
-                raise
+    # 在提交到线程池前检查一次控制信号
+    if control_callback:
+        signal = control_callback()
+        if signal in ("cancel", "pause"):
+            with _write_lock:
+                _cancel_flag[0] = True
+            report(phase="done", current=0, total=n_batch,
+                   message=f"已{signal}", control=signal)
+            if batch_info_out is not None:
+                batch_info_out.update({"total_rows": n_total, "batch_start_row": start,
+                                       "batch_end_exclusive": start,
+                                       "has_more": True, "control": signal})
+            raise _ControlExit(signal, start)
+
+    with ThreadPoolExecutor(max_workers=_WORKERS) as _pool:
+        _futures = {_pool.submit(_process_one_row, i): i for i in range(start, end)}
+        import time as _ptime
+        _pending = set(_futures.keys())
+        while _pending:
+            _done_futures, _pending = wait(_pending, timeout=0.5, return_when="FIRST_COMPLETED")
+            for _f in _done_futures:
+                try:
+                    _f.result()
+                except _ControlExit as _ce:
+                    # 取消所有未完成的任务
+                    with _write_lock:
+                        _cancel_flag[0] = True
+                    for _pf in _pending:
+                        _pf.cancel()
+                    # 重新抛出让外层处理
+                    _done = _row_done[0]
+                    report(phase="done", current=_done, total=n_batch,
+                           message=f"已{_ce.reason}", control=_ce.reason)
+                    if batch_info_out is not None:
+                        batch_info_out.update({"total_rows": n_total, "batch_start_row": start,
+                                               "batch_end_exclusive": _done + start,
+                                               "has_more": True, "control": _ce.reason})
+                    if _ce.reason == "pause":
+                        _write_progress(output_path, _done + start, n_total, batch_info_out)
+                    raise
+                except Exception as _exc:
+                    logger.exception("行处理异常: %s", _exc)
+                    if stop_on_error:
+                        with _write_lock:
+                            _cancel_flag[0] = True
+                        for _pf in _pending:
+                            _pf.cancel()
+                        raise
 
     # ═══ 后处理：输出 Excel ═══
     detail_df = pd.DataFrame(detail_rows) if detail_rows else None
