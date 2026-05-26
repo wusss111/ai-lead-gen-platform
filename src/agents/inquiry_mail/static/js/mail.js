@@ -463,9 +463,10 @@ window.batchSend = async function() {
   }
 
   const respectTz = el('chkTimezone')?.checked ?? true;
+  const sendJobId = currentJobId || crypto.randomUUID();
 
   const fd = new FormData();
-  fd.append('job_id', currentJobId || crypto.randomUUID());
+  fd.append('job_id', sendJobId);
   fd.append('respect_tz', respectTz ? '1' : '0');
   fd.append('customer_ids', Array.from(selectedCustomerIds).join(','));
 
@@ -477,12 +478,12 @@ window.batchSend = async function() {
       return;
     }
     const data = await r.json();
-    if (window.__trackJob) window.__trackJob(currentJobId + '_send', '发送邮件', 'inquiry-mail');
+    if (window.__trackJob) window.__trackJob(sendJobId + '_send', '发送邮件', 'inquiry-mail');
     showToast('发送任务已提交', 'info');
     el('stepResult').style.display = '';
     el('sendResults').innerHTML = '<p>正在连接发送队列...</p>';
     el('sendResultDesc').textContent = '0 发送, 0 失败';
-    pollSend();
+    pollSend(sendJobId);
   } catch(e) {
     console.error('batchSend error:', e);
     showToast('发送异常: ' + e.message, 'error');
@@ -500,9 +501,10 @@ async function refreshSummary() {
 }
 
 // ---- Send polling ----
-async function pollSend() {
+async function pollSend(jobId) {
+  jobId = jobId || currentJobId;
   const poll = async () => {
-    const r = await apiFetch('/inquiry-mail/api/send-status/' + currentJobId);
+    const r = await apiFetch('/inquiry-mail/api/send-status/' + jobId);
     const d = await r.json();
 
     if (d.progress) {
@@ -520,7 +522,7 @@ async function pollSend() {
     }
 
     if (d.status === 'finished' && d.result) {
-      if (window.__removeJob) window.__removeJob(currentJobId + '_send');
+      if (window.__removeJob) window.__removeJob(jobId + '_send');
       clearJobId();
       renderSendResults(d.result);
       await loadEmailable();
@@ -528,7 +530,7 @@ async function pollSend() {
       return;
     }
     if (d.status === 'failed') {
-      if (window.__removeJob) window.__removeJob(currentJobId + '_send');
+      if (window.__removeJob) window.__removeJob(jobId + '_send');
       clearJobId();
       el('sendResults').innerHTML = '<p style="color:var(--color-danger)">发送任务失败</p>';
       el('sendResultDesc').textContent = '发送失败';
