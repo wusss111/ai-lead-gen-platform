@@ -398,6 +398,15 @@ def _prefetch_all_websites(
                     _done_count += 1
                 if progress_callback:
                     progress_callback(_done_count, n_total)
+            # 主线程直接检查取消信号（工作线程可能都在忙碌中无法检测）
+            if control_callback:
+                signal = control_callback()
+                if signal in ("cancel", "pause"):
+                    with _prefetch_lock:
+                        _prefetch_cancelled = True
+                    for f in pending:
+                        f.cancel()
+                    break
             with _prefetch_lock:
                 if _prefetch_cancelled:
                     for f in pending:
@@ -862,7 +871,9 @@ def run_pipeline(
                                        "has_more": True, "control": signal})
             raise _ControlExit(signal, start)
 
-    with ThreadPoolExecutor(max_workers=_WORKERS) as _pool:
+    _pool = ThreadPoolExecutor(max_workers=_WORKERS)
+    _cancel_raised = None
+    try:
         _futures = {_pool.submit(_process_one_row, i): i for i in range(start, end)}
         import time as _ptime
         _pending = set(_futures.keys())
@@ -872,12 +883,11 @@ def run_pipeline(
                 try:
                     _f.result()
                 except _ControlExit as _ce:
-                    # 取消所有未完成的任务
+                    # 工作线程检测到取消/暂停 — 通知其他线程停止
                     with _write_lock:
                         _cancel_flag[0] = True
                     for _pf in _pending:
                         _pf.cancel()
-                    # 重新抛出让外层处理
                     _done = _row_done[0]
                     report(phase="done", current=_done, total=n_batch,
                            message=f"已{_ce.reason}", control=_ce.reason)
@@ -887,7 +897,7 @@ def run_pipeline(
                                                "has_more": True, "control": _ce.reason})
                     if _ce.reason == "pause":
                         _write_progress(output_path, _done + start, n_total, batch_info_out)
-                    raise
+                    _cancel_raised = _ce
                 except Exception as _exc:
                     logger.exception("行处理异常: %s", _exc)
                     if stop_on_error:
@@ -896,6 +906,31 @@ def run_pipeline(
                         for _pf in _pending:
                             _pf.cancel()
                         raise
+            # 主线程每 0.5 秒检查取消/暂停信号（工作线程在 LLM 调用中时检测不到）
+            if _cancel_raised is not None:
+                break
+            if control_callback and not _cancel_flag[0]:
+                signal = control_callback()
+                if signal in ("cancel", "pause"):
+                    with _write_lock:
+                        _cancel_flag[0] = True
+                    for _pf in _pending:
+                        _pf.cancel()
+                    _done = _row_done[0]
+                    report(phase="done", current=_done, total=n_batch,
+                           message=f"已{signal}", control=signal)
+                    if batch_info_out is not None:
+                        batch_info_out.update({"total_rows": n_total, "batch_start_row": start,
+                                               "batch_end_exclusive": _done + start,
+                                               "has_more": True, "control": signal})
+                    if signal == "pause":
+                        _write_progress(output_path, _done + start, n_total, batch_info_out)
+                    _cancel_raised = _ControlExit(signal, _done + start)
+    finally:
+        # wait=False: 不等待正在运行的任务（LLM调用无法中断，但_cancel_flag已设，它们会快速跳过写入）
+        _pool.shutdown(wait=False)
+    if _cancel_raised is not None:
+        raise _cancel_raised
 
     # ═══ 后处理：输出 Excel ═══
     detail_df = pd.DataFrame(detail_rows) if detail_rows else None
