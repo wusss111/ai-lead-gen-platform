@@ -289,27 +289,10 @@
 .col-company { min-width: 140px; max-width: 170px; }
 .col-country { width: 60px; }
 .col-contact { min-width: 80px; max-width: 100px; }
-.col-email { min-width: 140px; max-width: 200px; }
-.col-phone { min-width: 100px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--font-mono); font-size: 0.78rem; }
-/* Email multi-select dropdown */
-.email-cell { position: relative; display: inline-flex; align-items: center; gap: 2px; cursor: pointer; }
-.email-primary { font-family: var(--font-mono); font-size: 0.78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px; }
-.email-single { font-family: var(--font-mono); font-size: 0.78rem; }
-.email-toggle { font-size: 0.7rem; color: var(--text-muted); cursor: pointer; padding: 2px 4px; user-select: none; transition: color 0.15s; }
-.email-toggle:hover { color: var(--color-primary); }
-.email-dropdown { display: none; position: absolute; top: 100%; left: 0; min-width: 220px; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); z-index: 100; padding: 4px 0; }
-.email-dropdown.open { display: block; }
-.email-item { padding: 6px 12px; font-family: var(--font-mono); font-size: 0.78rem; cursor: pointer; transition: background 0.1s; white-space: nowrap; }
-.email-item:hover { background: var(--bg-hover, #f0f4ff); }
-.email-item.email-selected { color: var(--color-primary); font-weight: 600; }
-.email-item small { font-weight: 400; }
+.col-email { min-width: 140px; max-width: 180px; }
 /* Text truncation for overflow-prone columns */
-.col-company, .col-contact, .col-country {
+.col-company, .col-email, .col-contact, .col-country {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-/* email 列需要 visible overflow 以支持下拉菜单 */
-.col-email {
-  overflow: visible; text-overflow: ellipsis; white-space: nowrap;
 }
 .col-score { width: 72px; text-align: center; }
 .col-rec { width: 70px; text-align: center; }
@@ -700,7 +683,7 @@
   .batch-card { flex-direction: column; align-items: flex-start; }
   .data-table { font-size: 0.78rem; }
   .data-table th, .data-table td { padding: 0.45rem 0.5rem; }
-  .col-email, .col-phone, .col-review, .col-read { display: none; }
+  .col-email, .col-review, .col-read { display: none; }
 }
 
 @media (max-width: 600px) {
@@ -714,13 +697,3 @@
   .data-table { font-size: 0.75rem; }
   .col-country, .col-contact, .col-score, .col-rec, .col-review, .col-mail, .col-read { display: none; }
 }
-
-/* ---- detail page email dropdown ---- */
-.email-cell-detail { position: relative; display: inline-flex; align-items: center; gap: 4px; }
-.email-toggle-detail { font-size: 0.7rem; color: var(--text-muted); cursor: pointer; padding: 2px 4px; user-select: none; }
-.email-toggle-detail:hover { color: var(--color-primary); }
-.email-dropdown-detail { position: absolute; top: 100%; left: 0; min-width: 200px; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); z-index: 50; padding: 4px 0; }
-.email-item-detail { padding: 6px 12px; font-family: var(--font-mono); font-size: 0.82rem; cursor: pointer; }
-.email-item-detail:hover { background: rgba(0,0,0,0.05); }
-.email-item-detail.selected { color: var(--color-primary); font-weight: 600; }
-.email-item-detail small { font-weight: 400; color: var(--text-muted); }
