@@ -162,6 +162,7 @@ def send_emails_job(
     from rq import get_current_job
     from src.core.database import get_db
 
+    db = get_db()
     root = Path(data_root)
     mail_dir = root / "jobs" / folder_job_id
     emails_path = mail_dir / "emails.json"
@@ -208,7 +209,6 @@ def send_emails_job(
         return {"sent": 0, "failed": 0, "skipped": len(emails) - len(to_send)}
 
     # Daily quota check (serialised with BEGIN IMMEDIATE to prevent concurrent overrun)
-    db = get_db()
     db.execute("BEGIN IMMEDIATE")
     sent_today = _get_today_send_count(db)
     remaining = daily_limit - sent_today
