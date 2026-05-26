@@ -145,7 +145,7 @@ function renderStats() {
 function renderTable(customers) {
   const tbody = el('tableBody');
   if (!customers.length) {
-    tbody.innerHTML = `<tr><td colspan="11" class="empty-cell">
+    tbody.innerHTML = `<tr><td colspan="12" class="empty-cell">
       <div class="empty-icon">&#128269;</div><p>无匹配记录</p><p style="font-size:0.78rem;margin-top:0.25rem">尝试调整筛选条件或<a href="/customer-eval/">导入新客户</a></p>
     </td></tr>`;
     return;
@@ -160,7 +160,12 @@ function renderTable(customers) {
       <td class="col-company"><a href="/crm/${c.id}" title="${escAttr(c.company_name || '')}">${esc(c.company_name) || '-'}</a></td>
       <td class="col-country" title="${escAttr(c.country_region || '')}"><span class="country-flag">${esc(c.country_region) || '-'}</span></td>
       <td class="col-contact" title="${escAttr(c.contact_name || '')}">${esc(c.contact_name) || '-'}</td>
-      <td class="col-email" style="font-family:var(--font-mono);font-size:0.78rem" title="${escAttr(c.contact_email || '')}">${esc(c.contact_email) || '-'}</td>
+      <td class="col-phone" style="font-family:var(--font-mono);font-size:0.78rem">
+        <span class="truncate-cell" title="${escAttr(c.contact_phone || '')}" onclick="this.classList.toggle('expanded')">${esc(c.contact_phone) || '-'}</span>
+      </td>
+      <td class="col-email" style="font-family:var(--font-mono);font-size:0.78rem">
+        <span class="truncate-cell" title="${escAttr(c.contact_email || '')}" onclick="this.classList.toggle('expanded')">${esc(c.contact_email) || '-'}</span>
+      </td>
       <td class="col-score"><strong>${c.overall_score_computed != null ? c.overall_score_computed.toFixed(1) : '-'}</strong></td>
       <td class="col-rec">${badgeForRecommendation(c.deal_recommendation)}</td>
       <td class="col-review">${badgeForReview(c.manual_review_flag)}</td>
