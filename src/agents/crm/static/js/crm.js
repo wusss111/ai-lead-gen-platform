@@ -509,7 +509,7 @@ window.onAdvancedChange = function() {
 };
 
 window.clearAdvanced = function() {
-  const ids = ['afCountry', 'afMinScore', 'afEmailStatus', 'afBuyerSeller', 'afPriority', 'afEmailEmpty', 'afDataQuality', 'afCreatedFrom', 'afCreatedTo'];
+  const ids = ['afCountry', 'afMinScore', 'afEmailStatus', 'afBuyerSeller', 'afEmailEmpty', 'afDataQuality', 'afCreatedFrom', 'afCreatedTo'];
   ids.forEach(id => {
     const e = el(id);
     if (e) e.value = '';
@@ -522,7 +522,7 @@ function updateFilterBadge() {
   const badge = el('filterBadge');
   if (!badge) return;
 
-  const ids = ['afCountry', 'afMinScore', 'afEmailStatus', 'afBuyerSeller', 'afPriority', 'afEmailEmpty', 'afDataQuality', 'afCreatedFrom', 'afCreatedTo'];
+  const ids = ['afCountry', 'afMinScore', 'afEmailStatus', 'afBuyerSeller', 'afEmailEmpty', 'afDataQuality', 'afCreatedFrom', 'afCreatedTo'];
   let count = 0;
   ids.forEach(id => {
     const e = el(id);
