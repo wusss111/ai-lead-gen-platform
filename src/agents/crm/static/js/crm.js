@@ -54,7 +54,7 @@ async function loadCustomers() {
   const rec = el('filterRec')?.value || '';
   const review = el('filterReview')?.value || '';
   const sort = el('sortBy')?.value || '-created_at';
-  const sp = el('filterSalesperson')?.value || '';
+  const sp = el('filterSalesperson')?.value || el('afSalesperson')?.value || '';
 
   if (search) params.set('search', search);
   if (rec) params.set('deal_recommendation', rec);
@@ -66,7 +66,6 @@ async function loadCustomers() {
   const minScore = el('afMinScore')?.value || '';
   const emailSt = el('afEmailStatus')?.value || '';
   const role = el('afBuyerSeller')?.value || '';
-  const pri = el('afPriority')?.value || '';
   const dq = el('afDataQuality')?.value || '';
   const emailEmpty = el('afEmailEmpty')?.value || '';
   const from = el('afCreatedFrom')?.value || '';
@@ -76,7 +75,6 @@ async function loadCustomers() {
   if (minScore) params.set('min_score', minScore);
   if (emailSt) params.set('email_status', emailSt);
   if (role) params.set('buyer_seller_role', role);
-  if (pri) params.set('priority', pri);
   if (dq) params.set('data_quality', dq);
   if (emailEmpty) params.set('email_empty', '1');
   if (from) params.set('created_from', from);
@@ -467,15 +465,18 @@ async function loadSalespersonData() {
     salespersonCache = list;
     console.log('Loaded', list.length, 'salespersons');
 
-    // Populate filter dropdown
-    const filterSel = el('filterSalesperson');
-    if (filterSel) {
-      list.forEach(s => {
-        const opt = document.createElement('option');
-        opt.value = s.id;
-        opt.textContent = s.name + (s.is_active ? '' : ' (停用)');
-        filterSel.appendChild(opt);
-      });
+    // Populate filter dropdowns
+    for (const selId of ['filterSalesperson', 'afSalesperson']) {
+      const filterSel = el(selId);
+      if (filterSel) {
+        // Keep default options, append salespersons
+        list.forEach(s => {
+          const opt = document.createElement('option');
+          opt.value = s.id;
+          opt.textContent = s.name + (s.is_active ? '' : ' (停用)');
+          filterSel.appendChild(opt);
+        });
+      }
     }
 
     // Populate batch assign dropdown

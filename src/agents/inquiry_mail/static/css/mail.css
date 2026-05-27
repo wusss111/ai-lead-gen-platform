@@ -1,7 +1,7 @@
 /* Inquiry Mail — Email generation, inline edit, send */
 /* Uses Deep Sea Route design system from platform.css */
 
-.mail-page { max-width: 980px; margin: 0 auto; }
+.mail-page { max-width: 1400px; margin: 0 auto; padding: 0 1rem; }
 
 /* ---- Header ---- */
 .mail-header {
@@ -138,7 +138,6 @@
 
 /* ---- Table ---- */
 .table-wrap {
-  overflow-x: auto;
   border-radius: var(--radius-sm);
 }
 .data-table {
@@ -384,7 +383,7 @@
 }
 
 /* ---- Responsive ---- */
-@media (max-width: 700px) {
+@media (max-width: 900px) {
   .mail-title { font-size: 1.4rem; }
   .mail-card { padding: 1rem; }
   .filter-row { flex-direction: column; }
@@ -392,3 +391,84 @@
   .select-bar { flex-direction: column; align-items: stretch; }
   .select-count { margin-right: 0; }
 }
+
+/* ---- email multi-select dropdown ---- */
+.email-cell { position: relative; display: inline-flex; align-items: center; gap: 2px; cursor: pointer; }
+.email-primary { font-family: var(--font-mono); font-size: 0.78rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 150px; }
+.email-toggle { font-size: 0.7rem; color: var(--text-muted); cursor: pointer; padding: 2px 4px; user-select: none; }
+.email-toggle:hover { color: var(--color-primary); }
+.email-dropdown { display: none; position: absolute; top: 100%; left: 0; min-width: 220px; background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: 6px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); z-index: 100; padding: 4px 0; }
+.email-dropdown.open { display: block; }
+.email-item { padding: 6px 12px; font-family: var(--font-mono); font-size: 0.78rem; cursor: pointer; white-space: nowrap; }
+.email-item:hover { background: rgba(0,0,0,0.05); }
+.email-item.email-selected { color: var(--color-primary); font-weight: 600; }
+.email-item small { font-weight: 400; }
+
+/* ---- Advanced Filter Panel ---- */
+.advanced-toggle { position: relative; }
+.filter-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px;
+  border-radius: 9px;
+  background: var(--ocean-500);
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 0 5px;
+  margin-left: 2px;
+}
+.advanced-panel {
+  margin-top: 0.65rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+.advanced-row {
+  display: flex; gap: 0.6rem; align-items: flex-end;
+  flex-wrap: wrap; margin-bottom: 0.4rem;
+}
+.advanced-field {
+  display: flex; flex-direction: column; gap: 0.2rem;
+  min-width: 120px; flex: 1;
+}
+.advanced-field label {
+  font-size: 0.68rem; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.04em;
+  font-weight: 600;
+}
+.af-input {
+  padding: 0.45rem 0.55rem;
+  background: var(--bg-input);
+  border: var(--border-input);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+}
+.af-input:focus { border-color: var(--ocean-400); outline: none; }
+.af-num { max-width: 110px; }
+.af-select {
+  padding: 0.45rem 1.8rem 0.45rem 0.55rem;
+  background: var(--bg-input);
+  border: var(--border-input);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  cursor: pointer;
+  appearance: none; -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%238899b4' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.4rem center;
+}
+.af-select:focus { border-color: var(--ocean-400); outline: none; }
+.advanced-actions {
+  display: flex; justify-content: flex-end;
+  margin-top: 0.35rem;
+}
+.btn-link {
+  background: none; border: none;
+  color: var(--ocean-300); font-size: 0.8rem; font-family: var(--font-body);
+  cursor: pointer; padding: 0.2rem 0.3rem; text-decoration: none;
+  transition: color 0.15s;
+}
+.btn-link:hover { color: var(--ocean-200); text-decoration: underline; }

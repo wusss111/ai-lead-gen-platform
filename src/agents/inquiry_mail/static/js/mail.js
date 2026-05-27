@@ -143,7 +143,6 @@ async function loadEmailable() {
     const country = el('afCountry')?.value?.trim() || '';
     const minScore = el('afMinScore')?.value || '';
     const role = el('afBuyerSeller')?.value || '';
-    const pri = el('afPriority')?.value || '';
     const dq = el('afDataQuality')?.value || '';
     const review = el('afReviewFlag')?.value || '';
     const from = el('afCreatedFrom')?.value || '';
@@ -159,7 +158,6 @@ async function loadEmailable() {
     if (country) params.set('country', country);
     if (minScore) params.set('min_score', minScore);
     if (role) params.set('buyer_seller_role', role);
-    if (pri) params.set('priority', pri);
     if (dq) params.set('data_quality', dq);
     if (review) params.set('review_flag', review);
     if (from) params.set('created_from', from);
@@ -196,7 +194,7 @@ window.onAdvancedChange = function() {
 };
 
 window.clearAdvanced = function() {
-  const ids = ['afEmailEmpty', 'afCountry', 'afMinScore', 'afBuyerSeller', 'afPriority', 'afDataQuality', 'afReviewFlag', 'afCreatedFrom', 'afCreatedTo'];
+  const ids = ['afEmailEmpty', 'afCountry', 'afMinScore', 'afBuyerSeller', 'afDataQuality', 'afReviewFlag', 'afCreatedFrom', 'afCreatedTo'];
   ids.forEach(id => {
     const e = el(id);
     if (e) e.value = '';
@@ -209,7 +207,7 @@ function updateFilterBadge() {
   const badge = el('filterBadge');
   if (!badge) return;
 
-  const ids = ['afEmailEmpty', 'afCountry', 'afMinScore', 'afBuyerSeller', 'afPriority', 'afDataQuality', 'afReviewFlag', 'afCreatedFrom', 'afCreatedTo'];
+  const ids = ['afEmailEmpty', 'afCountry', 'afMinScore', 'afBuyerSeller', 'afDataQuality', 'afReviewFlag', 'afCreatedFrom', 'afCreatedTo'];
   let count = 0;
   ids.forEach(id => {
     const e = el(id);
