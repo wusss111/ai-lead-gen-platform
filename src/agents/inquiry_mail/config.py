@@ -16,7 +16,7 @@ class InquiryMailConfig:
     from_name: str = "外贸团队"
     use_tls: bool = True
     use_ssl: bool = False
-    send_delay_seconds: float = 45.0
+    send_delay_seconds: float = 10.0
     max_per_job: int = 50
     daily_limit: int = 50
     default_language: str = "auto"
