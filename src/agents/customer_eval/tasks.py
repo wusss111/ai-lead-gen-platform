@@ -68,11 +68,11 @@ def run_eval_job(
         append_output = True
 
     if batch_size is not None:
-        eff_limit = max(1, int(batch_size))
+        eff_batch = max(1, int(batch_size))
     elif limit is not None:
-        eff_limit = max(1, int(limit))
+        eff_batch = max(1, int(limit))
     else:
-        eff_limit = None
+        eff_batch = 300  # 默认每批 300 行，安全内存上限
 
     from rq import get_current_job
 
@@ -113,8 +113,8 @@ def run_eval_job(
 
     batch_info: dict[str, Any] = {}
     logger.info(
-        "RQ folder=%s start: input=%s start_row=%s limit=%s append=%s",
-        folder_job_id, inp, start_row, eff_limit, append_output,
+        "RQ folder=%s start: input=%s start_row=%s batch=%s append=%s",
+        folder_job_id, inp, start_row, eff_batch, append_output,
     )
 
     # 检查是否为断点续跑
@@ -131,86 +131,87 @@ def run_eval_job(
         append_output = True
 
     row_saver = _make_row_saver(folder_job_id, inp.name, resume=is_resume)
-
-    # 开始前更新批次状态为 started（避免预处理阶段显示 queued 造成卡住假象）
     _update_batch_status(folder_job_id, "started")
 
+    # ═══ 自动分批循环：每批 eff_batch 行，全部跑完自动结束 ═══
+    current_start = start_row
+    total_processed = 0
+    final_has_more = False
+    last_error = None
+
     try:
-        df = run_pipeline(
-            inp, out,
-            dry_run=dry_run, no_fetch=no_fetch,
-            limit=eff_limit, start_row=start_row,
-            append_output=append_output,
-            progress_callback=rq_progress,
-            control_callback=check_control,
-            batch_info_out=batch_info,
-            row_save_callback=row_saver,
-        )
+        while True:
+            # 每批开始前检查取消信号
+            signal = check_control()
+            if signal == "cancel":
+                raise _ControlExit("cancel", current_start)
+            if signal == "pause":
+                raise _ControlExit("pause", current_start)
+
+            batch_info.clear()
+            df = run_pipeline(
+                inp, out,
+                dry_run=dry_run, no_fetch=no_fetch,
+                limit=eff_batch, start_row=current_start,
+                append_output=(current_start > 0 or append_output),
+                progress_callback=rq_progress,
+                control_callback=check_control,
+                batch_info_out=batch_info,
+                row_save_callback=row_saver,
+            )
+
+            batch_end = batch_info.get("batch_end_exclusive", current_start + len(df))
+            batch_rows = batch_end - current_start
+            total_processed += batch_rows
+            final_has_more = bool(batch_info.get("has_more", False))
+
+            logger.info("RQ batch done: rows %d-%d, total_processed=%d, has_more=%s",
+                        current_start + 1, batch_end, total_processed, final_has_more)
+
+            if not final_has_more:
+                break
+
+            # 自动续跑下一批
+            current_start = batch_end
+            rq_progress({"phase": "batch_done", "current": total_processed,
+                         "total": batch_info.get("total_rows", total_processed),
+                         "message": f"已完成 {total_processed} 行，自动继续下一批..."})
+            time.sleep(0.5)  # 给 Redis 一点时间同步
+
     except _ControlExit as e:
-        logger.warning("RQ job %s %s at row %d, saving partial results", folder_job_id, e.reason, e.row)
-        n = max(0, e.row - start_row)
-        # 逐行保存已生效，不重复 DELETE+INSERT（否则会冲掉已入库的行）
-        if n > 0 and not row_saver:
-            _save_to_database(folder_job_id, inp.name, _df_from_partial(inp, out, start_row, e.row))
+        logger.warning("RQ job %s %s at row %d", folder_job_id, e.reason, e.row)
         if e.reason == "cancel":
             _update_batch_status(folder_job_id, "cancelled")
-            # Clean up progress file
-            prog_path = job_dir / "progress.json"
-            if prog_path.is_file():
-                prog_path.unlink()
         else:
             _update_batch_status(folder_job_id, "paused")
-        # Clear control signal
         _ctrl_conn.delete(f"job_control:{folder_job_id}")
-        return {"rows": n, "output_path": str(out), "control": e.reason,
-                "batch_start_row": start_row, "batch_end_exclusive": e.row}
+        # 保存进度以便续跑
+        prog_path = job_dir / "progress.json"
+        n_total = batch_info.get("total_rows", total_processed)
+        if n_total > 0 and e.row < n_total:
+            json.dump({"total_rows": n_total, "next_start_row": e.row,
+                       "batch_size": eff_batch, "has_more": True},
+                      prog_path.open("w"), ensure_ascii=False, indent=2)
+        return {"rows": max(0, e.row - start_row), "output_path": str(out),
+                "control": e.reason, "batch_start_row": start_row,
+                "batch_end_exclusive": e.row}
     except Exception:
         logger.exception("RQ job %s pipeline error", folder_job_id)
-        try:
-            _update_batch_status(folder_job_id, "failed")
-        except Exception:
-            logger.exception("更新失败状态时再次异常")
-        try:
-            _ctrl_conn.delete(f"job_control:{folder_job_id}")
-        except Exception:
-            pass
+        _update_batch_status(folder_job_id, "failed")
+        _ctrl_conn.delete(f"job_control:{folder_job_id}")
         raise
 
-    # 行已逐条入库，只更新批次状态
-    batch_start = batch_info.get("batch_start_row", 0)
-    batch_end = batch_info.get("batch_end_exclusive", len(df))
-    n = batch_end - batch_start
-    try:
-        _update_batch_total(folder_job_id, inp.name, n)
-    except Exception:
-        logger.exception("更新批次完成状态失败")
-
+    # 全部完成
+    n_total = batch_info.get("total_rows", total_processed)
+    _update_batch_total(folder_job_id, inp.name, n_total)
     prog_path = job_dir / "progress.json"
-    bs = batch_size if batch_size is not None else eff_limit
-    if batch_info.get("has_more") and bs is not None:
-        prog_path.write_text(
-            json.dumps({
-                "total_rows": batch_info.get("total_rows", n),
-                "next_start_row": batch_info.get("batch_end_exclusive", n),
-                "batch_size": bs,
-                "has_more": True,
-            }, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-    else:
-        if prog_path.is_file():
-            prog_path.unlink()
-        _update_batch_status(folder_job_id, "finished")
+    if prog_path.is_file():
+        prog_path.unlink()
+    _ctrl_conn.delete(f"job_control:{folder_job_id}")
 
-    logger.info("RQ folder=%s done: rows=%s out=%s", folder_job_id, n, out)
-    return {
-        "rows": n,
-        "output_path": str(out),
-        "batch_start_row": batch_info.get("batch_start_row", 0),
-        "batch_end_exclusive": batch_info.get("batch_end_exclusive", n),
-        "has_more": bool(batch_info.get("has_more", False)),
-        "total_rows": batch_info.get("total_rows", n),
-    }
+    logger.info("RQ folder=%s ALL DONE: %s rows", folder_job_id, total_processed)
+    return {"rows": total_processed, "output_path": str(out),
+            "has_more": False, "total_rows": n_total}
 
 
 def run_url_eval_job(

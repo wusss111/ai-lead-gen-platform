@@ -178,9 +178,7 @@ def continue_job(
     if not prog.get("has_more"):
         raise HTTPException(409, "All rows already processed")
     start = int(prog["next_start_row"])
-    bs = int(prog.get("batch_size") or 0)
-    if bs < 1:
-        raise HTTPException(400, "progress.json missing valid batch_size")
+    bs = int(prog.get("batch_size") or 300)
 
     queue = get_queue(config.redis_url, eval_cfg.queue_name)
     rq_job = queue.enqueue(
