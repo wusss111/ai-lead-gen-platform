@@ -381,7 +381,7 @@ def _prefetch_all_websites(
                 with _prefetch_lock:
                     _prefetch_cancelled = True
                 return (ws, [], [f"任务已{signal}"])
-        pages, errs = fetch_pages_for_website_field(ws, cache_dir=cache_dir)
+        pages, errs = fetch_pages_for_website_field(ws, cache_dir=cache_dir, timeout_sec=10.0, skip_playwright=True)
         return (ws, pages, errs)
 
     with ThreadPoolExecutor(max_workers=_PREFETCH_WORKERS) as pool:
@@ -641,7 +641,7 @@ def run_pipeline(
                 else:
                     # 缓存未命中时兜底抓取（不应发生，除非预抓取跳过）
                     try:
-                        ctx.pages, ctx.fetch_errs = fetch_pages_for_website_field(website, cache_dir=cache)
+                        ctx.pages, ctx.fetch_errs = fetch_pages_for_website_field(website, cache_dir=cache, timeout_sec=10.0)
                     except Exception as _fetch_exc:
                         logger.exception("行 %d (%s) 网站抓取异常: %s", i + 1, name, website)
                         ctx.pages = []
