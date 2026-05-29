@@ -20,5 +20,6 @@ def register() -> AgentManifest:
         template_dir=str(_AGENT_DIR / "templates"),
         static_dir=str(_AGENT_DIR / "static"),
         config_class=CustomerEvalConfig,
+        admin_only=True,
         nav={"icon": "&#128202;", "order": 1},
     )

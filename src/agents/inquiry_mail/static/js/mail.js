@@ -21,6 +21,10 @@ function el(id) { return document.getElementById(id); }
 // ---- Init ----
 document.addEventListener('DOMContentLoaded', () => {
   checkSmtp();
+  if (window.__currentUser && window.__currentUser.role === 'salesperson') {
+    const spFilter = document.getElementById('filterSalesperson');
+    if (spFilter) spFilter.parentElement.style.display = 'none';
+  }
   loadSalespersons();
   loadEmailable();
   restoreState();

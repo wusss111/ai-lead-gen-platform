@@ -7,8 +7,8 @@ import logging
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi import FastAPI, Depends, Form, Request, Response
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader
 
@@ -18,6 +18,8 @@ from src.core.config import get_config
 _SRC_DIR = Path(__file__).resolve().parent.parent  # src/
 _SHARED_STATIC = _SRC_DIR / "static"
 _SHARED_TEMPLATES = _SRC_DIR / "templates"
+
+from src.core.auth import get_current_user as _auth_get_user
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +85,17 @@ def create_app() -> FastAPI:
 
     # ---- Platform routes ----
 
+    @app.middleware("http")
+    async def _user_middleware(request: Request, call_next):
+        """Attach current_user to request.state for template rendering."""
+        try:
+            user = _auth_get_user(request, config)
+        except Exception:
+            user = None
+        request.state.current_user = user
+        response = await call_next(request)
+        return response
+
     @app.get("/health")
     def health():
         return {"status": "ok", "agents": list(agents.keys())}
@@ -136,23 +149,126 @@ def create_app() -> FastAPI:
         return Response(content=pixel, media_type="image/gif",
                         headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
+    # ---- Login / Logout routes ----
+
+    @app.get("/login", response_class=HTMLResponse)
+    def login_page(request: Request):
+        redirect_url = request.query_params.get("redirect", "/")
+        t = jinja_env.get_template("login.html")
+        return HTMLResponse(t.render({
+            "request": request,
+            "redirect": redirect_url,
+        }))
+
+
+    @app.post("/login")
+    def login_action(
+        request: Request,
+        config_override=Depends(get_config),
+        username: str = Form(""),
+        password: str = Form(""),
+        redirect: str = Form("/"),
+    ):
+        """Handle login form submission."""
+        from src.core.auth import create_session
+        from src.core.database import get_db as _login_db
+        import bcrypt as _bcrypt
+
+        db = _login_db()
+        sp = db.execute(
+            "SELECT id, name, password_hash, role FROM salesperson WHERE name=? AND is_active=1",
+            (username.strip(),),
+        ).fetchone()
+
+        if not sp or not sp["password_hash"]:
+            redirect_url = request.query_params.get("redirect", "/")
+            t = jinja_env.get_template("login.html")
+            return HTMLResponse(t.render({
+                "request": request, "redirect": redirect_url, "error": "用户名或密码错误"
+            }), status_code=401)
+
+        try:
+            pw_hash = sp["password_hash"]
+            if isinstance(pw_hash, str):
+                pw_hash = pw_hash.encode("utf-8")
+            pw_ok = _bcrypt.checkpw(password.encode("utf-8"), pw_hash)
+        except Exception:
+            pw_ok = False
+
+        if not pw_ok:
+            redirect_url = request.query_params.get("redirect", "/")
+            t = jinja_env.get_template("login.html")
+            return HTMLResponse(t.render({
+                "request": request, "redirect": redirect_url, "error": "用户名或密码错误"
+            }), status_code=401)
+
+        session_id = create_session(config, {
+            "id": sp["id"], "name": sp["name"], "role": sp["role"] or "salesperson",
+        })
+        redirect_target = redirect.strip() or "/"
+        if not redirect_target.startswith("/"):
+            redirect_target = "/"
+        resp = RedirectResponse(url=redirect_target, status_code=303)
+        resp.set_cookie("session_id", session_id, httponly=True, samesite="lax", max_age=86400)
+        return resp
+
+
+    @app.post("/logout")
+    def logout_action(request: Request, config_override=Depends(get_config)):
+        """Handle logout."""
+        from src.core.auth import destroy_session
+        session_id = request.cookies.get("session_id", "")
+        if session_id:
+            destroy_session(config, session_id)
+        resp = RedirectResponse(url="/login", status_code=303)
+        resp.delete_cookie("session_id")
+        return resp
+
     # Store on app.state
     app.state.nav_agents = nav_agents
     app.state.agents = agents
     app.state.jinja_env = jinja_env
     app.state.config = config
 
-    # Schedule IMAP polling (non-blocking background task)
+    # Bootstrap admin + Schedule IMAP polling (non-blocking background task)
     @app.on_event("startup")
-    async def _start_imap_scheduler() -> None:
-        from rq import Queue
-        from redis import Redis
+    async def _startup_tasks() -> None:
+        """Bootstrap admin account and start IMAP poll scheduler."""
 
-        redis_conn = Redis.from_url(config.redis_url)
+        # 1. Admin bootstrap
+        import bcrypt as _bcrypt
+        import os as _os
+        from src.core.database import get_db as _bootstrap_db
+
+        db_local = _bootstrap_db()
+        existing = db_local.execute(
+            "SELECT 1 FROM salesperson WHERE role='admin' AND is_active=1"
+        ).fetchone()
+        if not existing:
+            admin_pw = (_os.environ.get("ADMIN_PASSWORD") or "").strip()
+            if not admin_pw:
+                import secrets as _secrets
+                admin_pw = _secrets.token_urlsafe(12)
+                logger.warning("=" * 60)
+                logger.warning("  No ADMIN_PASSWORD set. Generated admin password: %s", admin_pw)
+                logger.warning("  Please change it after first login!")
+                logger.warning("=" * 60)
+            pw_hash = _bcrypt.hashpw(admin_pw.encode("utf-8"), _bcrypt.gensalt()).decode("utf-8")
+            db_local.execute(
+                "INSERT INTO salesperson (name, password_hash, role) VALUES ('admin', ?, 'admin')",
+                (pw_hash,),
+            )
+            db_local.commit()
+            logger.info("Admin account created: username=admin")
+
+        # 2. IMAP poll scheduler (existing logic)
+        from rq import Queue
+        from redis import Redis as _Redis
+
+        redis_conn = _Redis.from_url(config.redis_url)
         q = Queue("inquiry_mail:default", connection=redis_conn)
 
         async def _schedule_imap_poll():
-            # Wait for server to fully start before first poll
             await asyncio.sleep(10)
             while True:
                 try:

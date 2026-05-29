@@ -9,7 +9,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from src.core.auth import require_auth
+from src.core.auth import require_auth, require_admin, apply_sales_filter
 from src.core.database import get_db, dict_from_row, dicts_from_rows
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,10 @@ router = APIRouter(tags=["crm"])
 # ---- Page routes ----
 
 @router.get("/", response_class=HTMLResponse)
-def crm_list_page(request: Request):
+def crm_list_page(
+    request: Request,
+    _: Annotated[None, Depends(require_auth)],
+):
     from src.core.app import app
     t = app.state.jinja_env.get_template("crm_list.html")
     return HTMLResponse(t.render({
@@ -31,7 +34,10 @@ def crm_list_page(request: Request):
 
 
 @router.get("/salespersons", response_class=HTMLResponse)
-def salespersons_page(request: Request):
+def salespersons_page(
+    request: Request,
+    _: Annotated[None, Depends(require_admin)],
+):
     from src.core.app import app
     t = app.state.jinja_env.get_template("crm_salespersons.html")
     return HTMLResponse(t.render({
@@ -42,13 +48,18 @@ def salespersons_page(request: Request):
 
 
 @router.get("/{customer_id}", response_class=HTMLResponse)
-def crm_detail_page(customer_id: int, request: Request):
+def crm_detail_page(
+    customer_id: int,
+    request: Request,
+    user: Annotated[dict, Depends(require_auth)],
+):
     from src.core.app import app
     db = get_db()
     row = db.execute(
         "SELECT c.*, s.name as salesperson_name, s.email as salesperson_email "
         "FROM customer c LEFT JOIN salesperson s ON c.assigned_salesperson_id = s.id "
-        "WHERE c.id=?", (customer_id,)
+        "WHERE c.id=?" + (" AND c.assigned_salesperson_id=?" if user["role"] == "salesperson" else ""),
+        (customer_id, user["id"]) if user["role"] == "salesperson" else (customer_id,),
     ).fetchone()
     if not row:
         raise HTTPException(404, "客户不存在")
@@ -82,7 +93,7 @@ def crm_detail_page(customer_id: int, request: Request):
 
 @router.get("/api/customers")
 def list_customers(
-    _: Annotated[None, Depends(require_auth)],
+    user: Annotated[dict, Depends(require_auth)],
     search: str = Query(""),
     deal_recommendation: str = Query(""),
     min_score: float | None = Query(None),
@@ -168,6 +179,8 @@ def list_customers(
         where.append("c.created_at <= ?")
         params.append(created_to.strip() + " 23:59:59")
 
+    apply_sales_filter(where, params, user)
+
     where_clause = ("WHERE " + " AND ".join(where)) if where else ""
 
     # Count
@@ -205,13 +218,14 @@ def list_customers(
 @router.get("/api/customers/{customer_id}")
 def get_customer(
     customer_id: int,
-    _: Annotated[None, Depends(require_auth)],
+    user: Annotated[dict, Depends(require_auth)],
 ) -> JSONResponse:
     db = get_db()
     row = db.execute(
         "SELECT c.*, s.name as salesperson_name, s.email as salesperson_email "
         "FROM customer c LEFT JOIN salesperson s ON c.assigned_salesperson_id = s.id "
-        "WHERE c.id=?", (customer_id,)
+        "WHERE c.id=?" + (" AND c.assigned_salesperson_id=?" if user["role"] == "salesperson" else ""),
+        (customer_id, user["id"]) if user["role"] == "salesperson" else (customer_id,),
     ).fetchone()
     if not row:
         raise HTTPException(404, "客户不存在")
@@ -243,7 +257,7 @@ def list_batches(
 
 @router.get("/api/customers/export")
 def export_customers(
-    _: Annotated[None, Depends(require_auth)],
+    user: Annotated[dict, Depends(require_auth)],
     batch_id: str = Query(""),
     deal_recommendation: str = Query(""),
 ) -> JSONResponse:
@@ -257,9 +271,10 @@ def export_customers(
     if deal_recommendation.strip():
         where.append("deal_recommendation = ?")
         params.append(deal_recommendation.strip())
+    apply_sales_filter(where, params, user)
     where_clause = ("WHERE " + " AND ".join(where)) if where else ""
     rows = db.execute(
-        f"SELECT * FROM customer {where_clause} ORDER BY overall_score_computed DESC LIMIT 5000",
+        f"SELECT * FROM customer c {where_clause} ORDER BY overall_score_computed DESC LIMIT 5000",
         params,
     ).fetchall()
     return JSONResponse(dicts_from_rows(rows))
@@ -288,7 +303,7 @@ tracking_last_opened_at)
 
 @router.post("/api/smart-search")
 def smart_search(
-    _: Annotated[None, Depends(require_auth)],
+    user: Annotated[dict, Depends(require_auth)],
     q: str = Form(""),
 ) -> JSONResponse:
     """Natural language → SQL query on the customer table. Returns matching customers."""
@@ -338,6 +353,10 @@ Rules:
             logger.warning("Smart search blocked for keyword %s: %s", keyword, sql[:120])
             raise HTTPException(400, f"查询包含禁止操作 ({keyword}),已被拦截")
 
+    # Data isolation: wrap as subquery and filter by assigned_salesperson_id for salesperson users
+    if user["role"] == "salesperson":
+        sql = f"SELECT * FROM ({sql}) AS _smart WHERE assigned_salesperson_id = {user['id']}"
+
     try:
         db = get_db()
         rows = db.execute(sql).fetchall()
@@ -358,7 +377,7 @@ Rules:
 
 @router.get("/api/salespersons")
 def list_salespersons(
-    _: Annotated[None, Depends(require_auth)],
+    _: Annotated[None, Depends(require_admin)],
 ) -> JSONResponse:
     db = get_db()
     rows = db.execute(
@@ -370,10 +389,12 @@ def list_salespersons(
 
 @router.post("/api/salespersons")
 def create_salesperson(
-    _: Annotated[None, Depends(require_auth)],
+    _: Annotated[None, Depends(require_admin)],
     name: str = Form(...),
     email: str = Form(""),
     phone: str = Form(""),
+    password: str = Form(""),
+    role: str = Form("salesperson"),
     smtp_host: str = Form(""),
     smtp_port: str = Form("587"),
     smtp_username: str = Form(""),
@@ -385,11 +406,16 @@ def create_salesperson(
     if not name.strip():
         raise HTTPException(400, "姓名不能为空")
     db = get_db()
+    import bcrypt as _bcrypt
+    pw_hash = None
+    if password.strip():
+        pw_hash = _bcrypt.hashpw(password.strip().encode("utf-8"), _bcrypt.gensalt()).decode("utf-8")
     cur = db.execute(
-        "INSERT INTO salesperson (name, email, phone, smtp_host, smtp_port, "
+        "INSERT INTO salesperson (name, email, phone, password_hash, role, smtp_host, smtp_port, "
         "smtp_username, smtp_password, imap_host, imap_port, wework_userid) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (name.strip(), email.strip(), phone.strip(),
+         pw_hash, role.strip(),
          smtp_host.strip(), int(smtp_port) if smtp_port.strip() else 587,
          smtp_username.strip(), smtp_password.strip(),
          imap_host.strip(), int(imap_port) if imap_port.strip() else 993,
@@ -403,10 +429,12 @@ def create_salesperson(
 @router.put("/api/salespersons/{sp_id}")
 def update_salesperson(
     sp_id: int,
-    _: Annotated[None, Depends(require_auth)],
+    _: Annotated[None, Depends(require_admin)],
     name: str = Form(None),
     email: str = Form(None),
     phone: str = Form(None),
+    password: str = Form(None),
+    role: str = Form(None),
     is_active: str = Form(None),
     smtp_host: str = Form(None),
     smtp_port: str = Form(None),
@@ -438,6 +466,14 @@ def update_salesperson(
     if is_active is not None and is_active.strip():
         sets.append("is_active=?")
         params.append(1 if is_active.strip().lower() in ("1", "true") else 0)
+    if password is not None and password.strip():
+        import bcrypt as _bcrypt
+        pw_hash = _bcrypt.hashpw(password.strip().encode("utf-8"), _bcrypt.gensalt()).decode("utf-8")
+        sets.append("password_hash=?")
+        params.append(pw_hash)
+    if role is not None and role.strip():
+        sets.append("role=?")
+        params.append(role.strip())
     if not sets:
         raise HTTPException(400, "没有需要更新的字段")
     params.append(sp_id)
@@ -449,7 +485,7 @@ def update_salesperson(
 @router.delete("/api/salespersons/{sp_id}")
 def delete_salesperson(
     sp_id: int,
-    _: Annotated[None, Depends(require_auth)],
+    _: Annotated[None, Depends(require_admin)],
 ) -> JSONResponse:
     db = get_db()
     db.execute("UPDATE customer SET assigned_salesperson_id=NULL WHERE assigned_salesperson_id=?", (sp_id,))
@@ -488,7 +524,7 @@ def gmail_auth_status(sp_id: int, _: Annotated[None, Depends(require_auth)]) -> 
 @router.put("/api/customers/{customer_id}/assign")
 def assign_customer(
     customer_id: int,
-    _: Annotated[None, Depends(require_auth)],
+    _: Annotated[None, Depends(require_admin)],
     salesperson_id: str = Form(""),
 ) -> JSONResponse:
     db = get_db()
@@ -507,7 +543,7 @@ def assign_customer(
 
 @router.post("/api/customers/batch-assign")
 def batch_assign_customers(
-    _: Annotated[None, Depends(require_auth)],
+    _: Annotated[None, Depends(require_admin)],
     body: dict = Body(...),
 ) -> JSONResponse:
     """Batch assign multiple customers to a salesperson."""
@@ -541,7 +577,7 @@ def batch_assign_customers(
 @router.delete("/api/customers/{customer_id}")
 def delete_customer(
     customer_id: int,
-    _: Annotated[None, Depends(require_auth)],
+    _: Annotated[None, Depends(require_admin)],
 ) -> JSONResponse:
     """Delete a single customer and related records."""
     db = get_db()
@@ -562,7 +598,7 @@ def delete_customer(
 
 @router.post("/api/customers/batch-delete")
 def batch_delete_customers(
-    _: Annotated[None, Depends(require_auth)],
+    _: Annotated[None, Depends(require_admin)],
     body: dict = Body(...),
 ) -> JSONResponse:
     """Batch delete customers by IDs."""

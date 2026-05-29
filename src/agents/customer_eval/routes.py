@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from rq.exceptions import NoSuchJobError
 from rq.job import Job
 
-from src.core.auth import require_auth
+from src.core.auth import require_admin
 from src.core.config import PlatformConfig, get_config
 from src.core.redis_utils import get_queue, get_rq_job_info
 from src.agents.customer_eval.config import CustomerEvalConfig
@@ -46,7 +46,10 @@ def _folder_rq_job_id(config: PlatformConfig, folder_job_id: str) -> str:
 # ---- Page routes ----
 
 @router.get("/", response_class=HTMLResponse)
-def eval_page(request: Request):
+def eval_page(
+    request: Request,
+    _: Annotated[None, Depends(require_admin)],
+):
     from src.core.app import app
     t = app.state.jinja_env.get_template("eval_index.html")
     return HTMLResponse(t.render({
@@ -60,7 +63,7 @@ def eval_page(request: Request):
 
 @router.post("/api/jobs")
 async def create_job(
-    _: Annotated[None, Depends(require_auth)],
+    _: Annotated[None, Depends(require_admin)],
     config: Annotated[PlatformConfig, Depends(get_config)],
     file: UploadFile = File(...),
     dry_run: bool = Form(False),
@@ -161,7 +164,7 @@ async def create_job(
 @router.post("/api/jobs/{job_id}/continue")
 def continue_job(
     job_id: str,
-    _: Annotated[None, Depends(require_auth)],
+    _: Annotated[None, Depends(require_admin)],
     config: Annotated[PlatformConfig, Depends(get_config)],
     dry_run: bool = Form(False),
     no_fetch: bool = Form(False),
@@ -216,7 +219,7 @@ def list_eval_batches(
 @router.get("/api/jobs/{job_id}")
 def get_job_status(
     job_id: str,
-    _: Annotated[None, Depends(require_auth)],
+    _: Annotated[None, Depends(require_admin)],
     config: Annotated[PlatformConfig, Depends(get_config)],
 ) -> dict[str, Any]:
     rq_id_file = config.data_dir / "jobs" / job_id / "rq_job_id.txt"
@@ -279,7 +282,7 @@ def get_job_status(
 @router.post("/api/jobs/{job_id}/cancel")
 def cancel_job(
     job_id: str,
-    _: Annotated[None, Depends(require_auth)],
+    _: Annotated[None, Depends(require_admin)],
     config: Annotated[PlatformConfig, Depends(get_config)],
 ) -> JSONResponse:
     """Cancel a running evaluation job. Saves partial results before stopping."""
@@ -301,7 +304,7 @@ def cancel_job(
 @router.post("/api/jobs/{job_id}/pause")
 def pause_job(
     job_id: str,
-    _: Annotated[None, Depends(require_auth)],
+    _: Annotated[None, Depends(require_admin)],
     config: Annotated[PlatformConfig, Depends(get_config)],
 ) -> JSONResponse:
     """Pause a running evaluation job. Saves progress for later resume."""
@@ -364,7 +367,7 @@ def resume_job(
 @router.get("/api/jobs/{job_id}/download")
 def download_result(
     job_id: str,
-    _: Annotated[None, Depends(require_auth)],
+    _: Annotated[None, Depends(require_admin)],
     config: Annotated[PlatformConfig, Depends(get_config)],
 ) -> FileResponse:
     conn = _job_connection(config)
@@ -390,7 +393,7 @@ def download_result(
 
 @router.post("/api/url-eval")
 def url_eval(
-    _: Annotated[None, Depends(require_auth)],
+    _: Annotated[None, Depends(require_admin)],
     config: Annotated[PlatformConfig, Depends(get_config)],
     url: str = Form(...),
     company_name: str = Form(""),
