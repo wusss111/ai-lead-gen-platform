@@ -11,7 +11,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+from tools.pipeline.paths import REPO_ROOT as _REPO_ROOT
 
 
 def process_file_job(

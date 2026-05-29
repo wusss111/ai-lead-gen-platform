@@ -14,8 +14,9 @@ from jinja2 import Environment, FileSystemLoader
 
 from src.agents import discover_agents
 from src.core.config import get_config
+from src.core.paths import get_repo_root, get_dotenv_path
 
-_SRC_DIR = Path(__file__).resolve().parent.parent  # src/
+_SRC_DIR = get_repo_root() / "src"
 _SHARED_STATIC = _SRC_DIR / "static"
 _SHARED_TEMPLATES = _SRC_DIR / "templates"
 
@@ -34,8 +35,7 @@ def render(tmpl_name: str, context: dict) -> HTMLResponse:
 
 def create_app() -> FastAPI:
     # Load .env from repo root (if present)
-    from pathlib import Path as _Path
-    _dotenv_path = _Path(__file__).resolve().parent.parent.parent / ".env"
+    _dotenv_path = get_dotenv_path()
     if _dotenv_path.is_file():
         from dotenv import load_dotenv
         load_dotenv(_dotenv_path)

@@ -11,7 +11,8 @@ from typing import Any
 
 # Ensure .env is loaded for worker processes
 from dotenv import load_dotenv as _load_dotenv
-_env_path = Path(__file__).resolve().parent.parent.parent.parent / ".env"
+from src.core.paths import get_dotenv_path, get_repo_root
+_env_path = get_dotenv_path()
 if _env_path.is_file():
     _load_dotenv(_env_path)
 
@@ -338,7 +339,7 @@ def send_emails_job(
         return None  # Fallback to global config
 
     # Auto-detect: use Gmail API only if OAuth token exists (fully set up)
-    _repo_root = Path(__file__).resolve().parent.parent.parent.parent
+    _repo_root = get_repo_root()
     _gmail_token = _repo_root / "var" / "gmail_token.json"
     _TOKEN_DIR = _repo_root / "var" / "gmail_tokens"
     _gmail_secret = _repo_root / "var" / "gmail_client_secret.json"

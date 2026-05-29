@@ -213,7 +213,8 @@ def send_emails(
         mail_cfg.respect_timezone = False
 
     # 检查是否有可用的发送通道：Gmail API token 或 SMTP
-    _gmail_token = Path(__file__).resolve().parent.parent.parent.parent / "var" / "gmail_token.json"
+    from src.core.paths import get_repo_root
+    _gmail_token = get_repo_root() / "var" / "gmail_token.json"
     _has_gmail = _gmail_token.is_file()
     _has_smtp = bool(mail_cfg.smtp_host and mail_cfg.from_email)
 

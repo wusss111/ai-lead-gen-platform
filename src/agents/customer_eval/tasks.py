@@ -19,7 +19,8 @@ from src.core.database import get_db
 
 # 确保 Worker 进程能读到 .env
 from dotenv import load_dotenv as _load_dotenv
-_env_path = Path(__file__).resolve().parent.parent.parent.parent / ".env"
+from src.core.paths import get_repo_root, get_dotenv_path
+_env_path = get_dotenv_path()
 if _env_path.is_file():
     _load_dotenv(_env_path)
 
@@ -55,7 +56,7 @@ def _child_entry(args_path: str) -> None:
     子进程退出后 OS 强制回收全部内存。
     """
     import sys
-    sys_path_root = str(Path(__file__).resolve().parent.parent.parent.parent)
+    sys_path_root = str(get_repo_root())
     if sys_path_root not in sys.path:
         sys.path.insert(0, sys_path_root)
 
@@ -266,7 +267,7 @@ def run_eval_job(
             proc = subprocess.Popen(
                 [sys.executable, "-m", "src.agents.customer_eval.worker_child",
                  str(args_path)],
-                cwd=str(Path(__file__).resolve().parent.parent.parent.parent),
+                cwd=str(get_repo_root()),
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             )
             # 双线程读取子进程 stdout + stderr（Windows 管道满会导致子进程死锁）
@@ -404,38 +405,61 @@ def run_eval_job(
         # 如果还有下一批 → 自动入队
         has_more = batch_end < n_total
         if has_more:
+            # 创建全新的 Redis 连接用于入队操作（_ctrl_conn 在子进程运行期间可能已断开）
+            _next_conn = None
+            next_job = None
+            for _retry in range(3):
+                try:
+                    if _next_conn is None:
+                        _next_conn = _Redis.from_url(_redis_url, socket_keepalive=True,
+                                                     socket_connect_timeout=10,
+                                                     socket_timeout=10)
+                    from rq import Queue as _RQQueue
+                    _q = _RQQueue("customer_eval:default", connection=_next_conn)
+                    next_job = _q.enqueue(
+                        "src.agents.customer_eval.tasks.run_eval_job",
+                        folder_job_id, str(root),
+                        dry_run=dry_run, no_fetch=no_fetch,
+                        batch_size=eff_batch, start_row=batch_end,
+                        append_output=True, input_ext=input_ext,
+                        timeout=14400, result_ttl=86400, failure_ttl=86400,
+                    )
+                    break
+                except Exception:
+                    logger.warning("批量入队重试 %d/3 失败", _retry + 1, exc_info=True)
+                    if _next_conn:
+                        try:
+                            _next_conn.close()
+                        except Exception:
+                            pass
+                        _next_conn = None
+                    if _retry < 2:
+                        import time as _sleep_time
+                        _sleep_time.sleep(1.0)
+
+            if next_job is None:
+                raise RuntimeError("批量入队失败（重试3次后仍失败）")
+
+            # 保存进度和 Redis job_next 键
+            _save_progress(job_dir, n_total, batch_end, eff_batch)
+            _next_conn.setex(
+                f"job_next:{folder_job_id}", 86400,
+                json.dumps({"next_job_id": next_job.id, "batch_rows": n_batch,
+                            "batch_end": batch_end, "total_rows": n_total}),
+            )
+            (job_dir / "rq_job_id.txt").write_text(next_job.id, encoding="utf-8")
+            # 清除控制信号（用新连接确保可靠删除）
+            _next_conn.delete(f"job_control:{folder_job_id}")
+            _next_conn.close()
+            # 同样用旧连接清理一次（防御）
             try:
-                from rq import Queue as _RQQueue
-                _q = _RQQueue("customer_eval:default", connection=_ctrl_conn)
-                next_job = _q.enqueue(
-                    "src.agents.customer_eval.tasks.run_eval_job",
-                    folder_job_id, str(root),
-                    dry_run=dry_run, no_fetch=no_fetch,
-                    batch_size=eff_batch, start_row=batch_end,
-                    append_output=True, input_ext=input_ext,
-                    job_timeout=14400,
-                )
-                # 保存进度（确保 progress.json 反映最新断点）
-                _save_progress(job_dir, n_total, batch_end, eff_batch)
-                # 存 next_job_id 到 Redis（rq_job_id.txt 马上会被覆盖，Redis key 不受影响）
-                _ctrl_conn.setex(
-                    f"job_next:{folder_job_id}", 86400,
-                    json.dumps({"next_job_id": next_job.id, "batch_rows": n_batch,
-                                "batch_end": batch_end, "total_rows": n_total}),
-                )
-                (job_dir / "rq_job_id.txt").write_text(next_job.id, encoding="utf-8")
                 _ctrl_conn.delete(f"job_control:{folder_job_id}")
-                logger.info("Auto-enqueue next batch: start=%d next_job=%s", batch_end, next_job.id)
-                return {"rows": total_processed, "total_rows": n_total,
-                        "has_more": True, "next_job_id": next_job.id,
-                        "batch_start_row": current_start, "batch_end_exclusive": batch_end}
             except Exception:
-                logger.exception("批量入队下一批失败，保存断点")
-                _save_progress(job_dir, n_total, batch_end, eff_batch)
-                _update_batch_status(folder_job_id, "paused")
-                _ctrl_conn.delete(f"job_control:{folder_job_id}")
-                return {"rows": total_processed, "total_rows": n_total,
-                        "error": True, "paused": True, "batch_end_exclusive": batch_end}
+                pass
+            logger.info("Auto-enqueue next batch: start=%d next_job=%s", batch_end, next_job.id)
+            return {"rows": total_processed, "total_rows": n_total,
+                    "has_more": True, "next_job_id": next_job.id,
+                    "batch_start_row": current_start, "batch_end_exclusive": batch_end}
 
         # 全部完成
         _update_batch_total(folder_job_id, inp.name, n_total)

@@ -1,10 +1,18 @@
 from __future__ import annotations
 
 import os
+import sys as _sys
 from pathlib import Path
 
+
+def _detect_repo_root() -> Path:
+    if getattr(_sys, "frozen", False):
+        return Path(_sys._MEIPASS)
+    return Path(__file__).resolve().parents[2]
+
+
 # 仓库根目录（假设本文件位于 tools/pipeline/）
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = _detect_repo_root()
 
 SCHEMA_EVAL_RESULT = REPO_ROOT / "schemas" / "eval_result.schema.json"
 SCHEMA_EXCEL_IO = REPO_ROOT / "schemas" / "excel_io.json"

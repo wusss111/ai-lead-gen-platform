@@ -6,11 +6,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+from src.core.paths import get_data_dir
+
 @dataclass
 class KnowledgeBaseConfig:
     """知识库配置。"""
 
-    data_dir: Path = field(default_factory=lambda: Path(__file__).resolve().parent.parent.parent.parent / "var" / "knowledge_base")
+    data_dir: Path = field(default_factory=lambda: get_data_dir() / "knowledge_base")
     persist_dir: str = ""  # ChromaDB 持久化目录（空则用默认）
     queue_name: str = "knowledge_base:default"
     max_file_size_mb: int = 500

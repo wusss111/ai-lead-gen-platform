@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["knowledge-base"])
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
+from tools.pipeline.paths import REPO_ROOT as _REPO_ROOT
 
 # 预设知识库分类
 PRESET_COLLECTIONS = ["产品信息", "公司文档", "采购表单"]

@@ -25,7 +25,8 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 # 子进程需要独立加载 .env
-_env_path = Path(__file__).resolve().parent.parent.parent.parent / ".env"
+from src.core.paths import get_dotenv_path
+_env_path = get_dotenv_path()
 if _env_path.is_file():
     from dotenv import load_dotenv as _load_dotenv
     _load_dotenv(_env_path)
