@@ -293,7 +293,7 @@ tracking_last_opened_at)
 
 @router.post("/api/smart-search")
 def smart_search(
-    _: Annotated[None, Depends(require_auth)],
+    user: Annotated[dict, Depends(require_auth)],
     q: str = Form(""),
 ) -> JSONResponse:
     """Natural language → SQL query on the customer table. Returns matching customers."""
@@ -342,6 +342,10 @@ Rules:
         if keyword in sql_upper:
             logger.warning("Smart search blocked for keyword %s: %s", keyword, sql[:120])
             raise HTTPException(400, f"查询包含禁止操作 ({keyword}),已被拦截")
+
+    # Data isolation: wrap as subquery and filter by assigned_salesperson_id for salesperson users
+    if user["role"] == "salesperson":
+        sql = f"SELECT * FROM ({sql}) AS _smart WHERE assigned_salesperson_id = {user['id']}"
 
     try:
         db = get_db()

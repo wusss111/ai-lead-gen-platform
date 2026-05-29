@@ -26,7 +26,7 @@ router = APIRouter(tags=["inquiry-mail"])
 # ---- Page routes ----
 
 @router.get("/", response_class=HTMLResponse)
-def mail_page(request: Request):
+def mail_page(request: Request, _: Annotated[None, Depends(require_auth)]):
     from src.core.app import app
     t = app.state.jinja_env.get_template("mail_index.html")
     return HTMLResponse(t.render({
@@ -94,7 +94,7 @@ def get_emailable_customers(
 
 @router.post("/api/generate")
 def generate_emails(
-    _: Annotated[None, Depends(require_auth)],
+    user: Annotated[dict, Depends(require_auth)],
     config: Annotated[PlatformConfig, Depends(get_config)],
     customer_ids: str = Form(""),
     language: str = Form("auto"),
@@ -103,6 +103,18 @@ def generate_emails(
     mail_cfg = InquiryMailConfig.from_env()
 
     ids = _parse_ids(customer_ids)
+    # Validate customer ownership for salesperson users
+    if ids and user["role"] == "salesperson":
+        db = get_db()
+        placeholders = ",".join("?" for _ in ids)
+        owned = db.execute(
+            f"SELECT id FROM customer WHERE id IN ({placeholders}) AND assigned_salesperson_id = ?",
+            ids + [user["id"]],
+        ).fetchall()
+        owned_ids = {r["id"] for r in owned}
+        ids = [i for i in ids if i in owned_ids]
+        if not ids:
+            raise HTTPException(403, "没有权限操作这些客户")
 
     job_id = str(uuid.uuid4())
     mail_dir = config.data_dir / "jobs" / job_id
@@ -185,7 +197,7 @@ def get_emails(
 
 @router.post("/api/send")
 def send_emails(
-    _: Annotated[None, Depends(require_auth)],
+    user: Annotated[dict, Depends(require_auth)],
     config: Annotated[PlatformConfig, Depends(get_config)],
     job_id: str = Form(""),
     customer_ids: str = Form(""),
@@ -224,6 +236,17 @@ def send_emails(
         )
 
     ids = _parse_ids(customer_ids)
+    # Validate customer ownership for salesperson users
+    if ids and user["role"] == "salesperson":
+        placeholders = ",".join("?" for _ in ids)
+        owned = db.execute(
+            f"SELECT id FROM customer WHERE id IN ({placeholders}) AND assigned_salesperson_id = ?",
+            ids + [user["id"]],
+        ).fetchall()
+        owned_ids = {r["id"] for r in owned}
+        ids = [i for i in ids if i in owned_ids]
+        if not ids:
+            raise HTTPException(403, "没有权限操作这些客户")
 
     smtp_dict = {
         "host": mail_cfg.smtp_host,
@@ -306,14 +329,20 @@ def get_send_status(
 @router.put("/api/emails/{customer_id}")
 def update_email(
     customer_id: int,
-    _: Annotated[None, Depends(require_auth)],
+    user: Annotated[dict, Depends(require_auth)],
     subject: str = Form(""),
     body: str = Form(""),
 ) -> JSONResponse:
     """Update email subject/body for a customer (only if not yet sent)."""
     db = get_db()
+    where_extra = ""
+    params_extra: list = []
+    if user["role"] == "salesperson":
+        where_extra = " AND c.assigned_salesperson_id = ?"
+        params_extra.append(user["id"])
     row = db.execute(
-        "SELECT email_status FROM customer WHERE id=?", (customer_id,)
+        f"SELECT c.email_status FROM customer c WHERE c.id=?{where_extra}",
+        (customer_id, *params_extra),
     ).fetchone()
     if not row:
         raise HTTPException(404, "客户不存在")
@@ -330,7 +359,7 @@ def update_email(
 
 @router.post("/api/emails/confirm")
 def confirm_emails(
-    _: Annotated[None, Depends(require_auth)],
+    user: Annotated[dict, Depends(require_auth)],
     customer_ids: str = Form(""),
 ) -> JSONResponse:
     """Confirm draft/generated emails, making them ready to send."""
@@ -339,11 +368,16 @@ def confirm_emails(
         raise HTTPException(400, "请提供要确认的客户ID")
 
     db = get_db()
+    extra_where = ""
+    extra_params: list = []
+    if user["role"] == "salesperson":
+        extra_where = " AND assigned_salesperson_id = ?"
+        extra_params = [user["id"]]
     placeholders = ",".join("?" for _ in ids)
     cur = db.execute(
         f"UPDATE customer SET email_status='confirmed', updated_at=datetime('now','localtime') "
-        f"WHERE id IN ({placeholders}) AND email_status IN ('draft','generated')",
-        ids,
+        f"WHERE id IN ({placeholders}) AND email_status IN ('draft','generated'){extra_where}",
+        ids + extra_params,
     )
     db.commit()
     return JSONResponse({"status": "ok", "confirmed_count": cur.rowcount})
@@ -367,7 +401,7 @@ def check_smtp(
 
 
 @router.get("/reply/{draft_id}", response_class=HTMLResponse)
-def reply_editor_page(draft_id: int, request: Request):
+def reply_editor_page(draft_id: int, request: Request, _: Annotated[None, Depends(require_auth)]):
     """Mobile-friendly reply editor for salespersons."""
     from src.core.app import app
     db = get_db()
@@ -392,7 +426,7 @@ def reply_editor_page(draft_id: int, request: Request):
 
 @router.get("/api/replies")
 def list_reply_drafts(
-    _: Annotated[None, Depends(require_auth)],
+    user: Annotated[dict, Depends(require_auth)],
     status: str = "pending",
     salesperson_id: str = "",
 ) -> JSONResponse:
@@ -400,7 +434,10 @@ def list_reply_drafts(
     db = get_db()
     where = ["r.status = ?"]
     params: list[Any] = [status]
-    if salesperson_id.strip():
+    if user["role"] == "salesperson":
+        where.append("r.salesperson_id = ?")
+        params.append(user["id"])
+    elif salesperson_id.strip():
         where.append("r.salesperson_id = ?")
         params.append(int(salesperson_id))
     rows = db.execute(
@@ -417,12 +454,19 @@ def list_reply_drafts(
 @router.put("/api/replies/{draft_id}")
 def update_reply_draft(
     draft_id: int,
-    _: Annotated[None, Depends(require_auth)],
+    user: Annotated[dict, Depends(require_auth)],
     draft_subject: str = Form(""),
     draft_body: str = Form(""),
 ) -> JSONResponse:
     """Update a reply draft's subject/body."""
     db = get_db()
+    if user["role"] == "salesperson":
+        draft = db.execute(
+            "SELECT 1 FROM reply_draft WHERE id=? AND salesperson_id=?",
+            (draft_id, user["id"]),
+        ).fetchone()
+        if not draft:
+            raise HTTPException(404, "草稿不存在")
     db.execute(
         "UPDATE reply_draft SET draft_subject=?, draft_body=?, status='edited', "
         "updated_at=datetime('now','localtime') WHERE id=?",
@@ -435,10 +479,17 @@ def update_reply_draft(
 @router.post("/api/replies/{draft_id}/approve")
 def approve_reply(
     draft_id: int,
-    _: Annotated[None, Depends(require_auth)],
+    user: Annotated[dict, Depends(require_auth)],
 ) -> JSONResponse:
     """Approve and send a reply draft using the salesperson's SMTP."""
     db = get_db()
+    if user["role"] == "salesperson":
+        draft_check = db.execute(
+            "SELECT 1 FROM reply_draft WHERE id=? AND salesperson_id=?",
+            (draft_id, user["id"]),
+        ).fetchone()
+        if not draft_check:
+            raise HTTPException(404, "草稿不存在")
     draft = db.execute(
         "SELECT r.*, s.smtp_host, s.smtp_port, s.smtp_username, s.smtp_password, "
         "s.name as sp_name, c.contact_email, c.company_name "
@@ -482,10 +533,17 @@ def approve_reply(
 @router.post("/api/replies/{draft_id}/ignore")
 def ignore_reply(
     draft_id: int,
-    _: Annotated[None, Depends(require_auth)],
+    user: Annotated[dict, Depends(require_auth)],
 ) -> JSONResponse:
     """Mark a reply draft as ignored."""
     db = get_db()
+    if user["role"] == "salesperson":
+        draft = db.execute(
+            "SELECT 1 FROM reply_draft WHERE id=? AND salesperson_id=?",
+            (draft_id, user["id"]),
+        ).fetchone()
+        if not draft:
+            raise HTTPException(404, "草稿不存在")
     db.execute(
         "UPDATE reply_draft SET status='cancelled', updated_at=datetime('now','localtime') WHERE id=?",
         (draft_id,),

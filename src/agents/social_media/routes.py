@@ -23,7 +23,7 @@ VALID_PLATFORMS = {"facebook", "twitter", "instagram", "youtube", "linkedin", "t
 # ── Page route ──
 
 @router.get("/", response_class=HTMLResponse)
-def social_list_page(request: Request):
+def social_list_page(request: Request, _: Annotated[None, Depends(require_auth)]):
     from src.core.app import app
     t = app.state.jinja_env.get_template("social_list.html")
     return HTMLResponse(t.render({

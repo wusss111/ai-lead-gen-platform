@@ -205,7 +205,10 @@ def create_app() -> FastAPI:
         session_id = create_session(config, {
             "id": sp["id"], "name": sp["name"], "role": sp["role"] or "salesperson",
         })
-        resp = RedirectResponse(url=redirect.strip() or "/", status_code=303)
+        redirect_target = redirect.strip() or "/"
+        if not redirect_target.startswith("/"):
+            redirect_target = "/"
+        resp = RedirectResponse(url=redirect_target, status_code=303)
         resp.set_cookie("session_id", session_id, httponly=True, samesite="lax", max_age=86400)
         return resp
 
