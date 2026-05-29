@@ -7,6 +7,11 @@
   <link rel="stylesheet" href="/static/css/platform.css" />
   <link rel="stylesheet" href="/static/chat/css/chat.css?v=6" />
   {% block head_extra %}{% endblock %}
+  <style>
+    .nav-user { font-size: 0.82rem; color: var(--text-secondary); margin: 0 0.5rem; white-space: nowrap; }
+    .nav-logout { font-size: 0.78rem; color: var(--text-muted); text-decoration: none; margin-right: 0.5rem; white-space: nowrap; }
+    .nav-logout:hover { color: var(--color-danger, #f85149); }
+  </style>
 </head>
 <body>
   <nav class="platform-nav">
@@ -17,7 +22,9 @@
       </a>
     </div>
     <ul class="nav-links">
+      {% set cu = request.state.current_user %}
       {% for agent in nav_agents %}
+      {% if not agent.admin_only or (cu and cu.role == 'admin') %}
       <li>
         <a href="/{{ agent.name }}/"
            class="nav-item {% if active_agent == agent.name %}active{% endif %}">
@@ -25,6 +32,7 @@
           {{ agent.display_name }}
         </a>
       </li>
+      {% endif %}
       {% endfor %}
     </ul>
     <div class="nav-actions">
@@ -32,6 +40,16 @@
         <span class="job-dot"></span>
         <span id="navJobCount">0</span>
       </a>
+      {% set cu = request.state.current_user %}
+      {% if cu %}
+      <span class="nav-user" title="角色: {{ '管理员' if cu.role == 'admin' else '销售' }}">
+        &#128100; {{ cu.name }}
+      </span>
+      <a href="#" onclick="document.getElementById('logoutForm').submit(); return false;" class="nav-logout">登出</a>
+      <form id="logoutForm" method="post" action="/logout" style="display:none"></form>
+      {% else %}
+      <a href="/login" class="nav-logout">登录</a>
+      {% endif %}
       <button class="theme-toggle" onclick="toggleTheme()" title="切换明暗模式">
         &#9788;
       </button>
@@ -139,6 +157,9 @@
       // Poll every 5 seconds
       setInterval(pollAll, POLL_INTERVAL);
     })();
+  </script>
+  <script>
+    window.__currentUser = {{ request.state.current_user | tojson | safe if request.state.current_user else 'null' }};
   </script>
   {% block scripts %}{% endblock %}
 
