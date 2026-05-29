@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}社媒管理 - 外贸客户平台{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="/static/social-media/css/social.css" />
+{% endblock %}
+
+{% block content %}
+<div class="social-page">
+
+  <!-- ── Header ── -->
+  <div class="social-header">
+    <hgroup>
+      <h1 class="social-title">社媒管理</h1>
+      <p class="social-subtitle">客户社交媒体账号总览 &middot; 按平台筛选 &middot; 邮件状态联动</p>
+    </hgroup>
+    <button class="btn-accent" onclick="exportCSV()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      导出 CSV
+    </button>
+  </div>
+
+  <!-- ── Stats Strip ── -->
+  <div class="stats-strip" id="statsStrip">
+    <div class="stat-chip">
+      <span class="chip-dot" style="background:var(--ocean-300)"></span>
+      <span class="chip-num" id="statTotal">-</span>
+      <span class="chip-label">有社媒</span>
+    </div>
+    <div class="stat-chip"><span class="chip-dot" style="background:#1877F2"></span><span class="chip-num" id="statFacebook">-</span><span class="chip-label">Facebook</span></div>
+    <div class="stat-chip"><span class="chip-dot" style="background:#E4405F"></span><span class="chip-num" id="statInstagram">-</span><span class="chip-label">Instagram</span></div>
+    <div class="stat-chip"><span class="chip-dot" style="background:#0A66C2"></span><span class="chip-num" id="statLinkedin">-</span><span class="chip-label">LinkedIn</span></div>
+    <div class="stat-chip"><span class="chip-dot" style="background:#FF0000"></span><span class="chip-num" id="statYoutube">-</span><span class="chip-label">YouTube</span></div>
+    <div class="stat-chip"><span class="chip-dot" style="background:#1DA1F2"></span><span class="chip-num" id="statTwitter">-</span><span class="chip-label">X/Twitter</span></div>
+  </div>
+
+  <!-- ── Filter Bar ── -->
+  <div class="filter-bar">
+    <input type="search" id="searchInput" placeholder="搜索公司名或联系人..." oninput="onSearchInput()" />
+    <select id="filterPlatform" onchange="reloadCustomers()" class="fs-select">
+      <option value="">全部平台</option>
+      <option value="facebook">Facebook</option>
+      <option value="twitter">X/Twitter</option>
+      <option value="instagram">Instagram</option>
+      <option value="youtube">YouTube</option>
+      <option value="linkedin">LinkedIn</option>
+      <option value="tiktok">TikTok</option>
+      <option value="pinterest">Pinterest</option>
+    </select>
+    <select id="filterHasSocial" onchange="reloadCustomers()" class="fs-select">
+      <option value="">全部</option>
+      <option value="1">有社媒</option>
+      <option value="0">无社媒</option>
+    </select>
+    <select id="filterSalesperson" onchange="reloadCustomers()" class="fs-select">
+      <option value="">全部销售</option>
+    </select>
+    <input type="text" id="filterCountry" placeholder="国家" oninput="onSearchInput()" class="fs-input fs-input-sm" />
+    <input type="number" id="filterMinScore" placeholder="最低分" min="0" max="5" step="0.5" onchange="reloadCustomers()" class="fs-input fs-input-sm" />
+    <select id="filterSort" onchange="reloadCustomers()" class="fs-select">
+      <option value="-created_at">最新</option>
+      <option value="-overall_score_computed">评分↓</option>
+      <option value="company_name">名称</option>
+    </select>
+    <span class="fs-filter-count" id="filterCount"></span>
+  </div>
+
+  <!-- ── Card Grid ── -->
+  <div class="social-grid" id="socialGrid">
+    <div class="loading-placeholder">
+      <div class="loading-spinner"></div>
+      <span>加载中...</span>
+    </div>
+  </div>
+
+  <!-- ── Pagination ── -->
+  <div class="pagination-bar" id="pagination">
+    <span class="page-info">加载中...</span>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script type="module" src="/static/social-media/js/social.js"></script>
+{% endblock %}
