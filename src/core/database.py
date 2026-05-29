@@ -321,6 +321,8 @@ def _init_pg_pool() -> Any | None:
         _ensure_column_pg(conn, "salesperson", "imap_host", "TEXT DEFAULT ''")
         _ensure_column_pg(conn, "salesperson", "imap_port", "INTEGER DEFAULT 993")
         _ensure_column_pg(conn, "salesperson", "wework_userid", "TEXT DEFAULT ''")
+        _ensure_column_pg(conn, "salesperson", "password_hash", "TEXT")
+        _ensure_column_pg(conn, "salesperson", "role", "TEXT DEFAULT 'salesperson'")
 
         with conn.cursor() as cur:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_customer_salesperson ON customer(assigned_salesperson_id)")
@@ -359,6 +361,8 @@ def get_db() -> sqlite3.Connection:
         _ensure_column(conn, "salesperson", "imap_host", "TEXT DEFAULT ''")
         _ensure_column(conn, "salesperson", "imap_port", "INTEGER DEFAULT 993")
         _ensure_column(conn, "salesperson", "wework_userid", "TEXT DEFAULT ''")
+        _ensure_column(conn, "salesperson", "password_hash", "TEXT")
+        _ensure_column(conn, "salesperson", "role", "TEXT DEFAULT 'salesperson'")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_customer_salesperson ON customer(assigned_salesperson_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_send_log_tracking ON daily_send_log(tracking_id)")
 

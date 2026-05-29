@@ -28,3 +28,5 @@ class AgentManifest:
 
     # Navigation entry; if None the agent won't appear in the navbar
     nav: dict | None = None            # {"icon": "&#9741;", "order": 1}
+
+    admin_only: bool = False  # True = 仅管理员可见（导航栏过滤）
