@@ -17,7 +17,7 @@ def test_read_zh_customer_columns(tmp_path: Path) -> None:
                 "客户名称": "测试公司",
                 "企业网站": "https://example.com",
                 "联系地址": "某路1号",
-                "固定电话": "123",
+                "固定电话": "1234567890",
                 "联系人邮箱": "a@b.com",
                 "联系人姓名": "张三",
             }
@@ -28,4 +28,8 @@ def test_read_zh_customer_columns(tmp_path: Path) -> None:
     df, missing = read_input_xlsx(inp)
     assert not missing
     assert df.loc[0, "company_name"] == "测试公司"
-    assert "某路1号" in str(df.loc[0, "notes"])
+    # 联系人信息现在保留在独立列中，不自动拼入备注
+    assert df.loc[0, "contact_address"] == "某路1号"
+    assert str(df.loc[0, "contact_phone"]) == "1234567890"
+    assert df.loc[0, "contact_email"] == "a@b.com"
+    assert df.loc[0, "contact_name"] == "张三"

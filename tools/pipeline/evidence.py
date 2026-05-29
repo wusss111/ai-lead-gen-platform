@@ -8,10 +8,11 @@ def merge_scrape_and_paste(
     scraped_blocks: list[tuple[str, str]],
     evidence_paste: str | None,
     max_total_chars: int = 28000,
-) -> str:
+) -> tuple[str, bool]:
     """
     scraped_blocks: (source_label, text) 如 (\"URL: https://...\", 正文)
     evidence_paste: Excel 人工粘贴列
+    Returns: (merged_text, was_truncated)
     """
     parts: list[str] = []
     for label, text in scraped_blocks:
@@ -25,9 +26,9 @@ def merge_scrape_and_paste(
         parts.append("【人工粘贴 evidence_paste】\n" + paste)
 
     if not parts:
-        return ""
+        return "", False
 
     body = EVIDENCE_SEP.join(parts)
     if len(body) <= max_total_chars:
-        return body
-    return body[:max_total_chars] + "\n\n...(证据已截断)"
+        return body, False
+    return body[:max_total_chars] + "\n\n...(证据已截断)", True

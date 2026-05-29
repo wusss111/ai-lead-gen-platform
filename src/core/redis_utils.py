@@ -37,7 +37,8 @@ def get_rq_job_info(job_id_file_path: Path | str, redis_url: str) -> dict[str, A
     try:
         if not path.is_file():
             return {"rq_status": "unknown"}
-        rq_id = path.read_text(encoding="utf-8").strip()
+        raw = path.read_text(encoding="utf-8-sig")
+        rq_id = raw.strip().lstrip("﻿")
         if not rq_id:
             return {"rq_status": "unknown"}
         conn = _get_redis(redis_url)

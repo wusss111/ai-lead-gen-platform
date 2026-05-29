@@ -31,6 +31,7 @@ class PlatformConfig:
         data = Path(data_dir) if data_dir else (REPO_ROOT / "var" / "platform")
         user = (os.environ.get("BASIC_USER") or os.environ.get("INTERNAL_WEB_BASIC_USER") or "").strip()
         pw = (os.environ.get("BASIC_PASSWORD") or os.environ.get("INTERNAL_WEB_BASIC_PASSWORD") or "").strip()
+        pg_url = os.environ.get("DATABASE_URL", "").strip()
         return cls(
             app_title=(os.environ.get("APP_TITLE") or "外贸客户平台").strip(),
             redis_url=(os.environ.get("REDIS_URL") or "redis://127.0.0.1:6379/0").strip(),
@@ -38,7 +39,7 @@ class PlatformConfig:
             basic_user=user or None,
             basic_password=pw or None,
             debug=os.environ.get("DEBUG", "").strip().lower() in ("1", "true", "yes"),
-            db_path=data.resolve() / "platform.db",
+            db_path=None if pg_url else data.resolve() / "platform.db",
         )
 
 

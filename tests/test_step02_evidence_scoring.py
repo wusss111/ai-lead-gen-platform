@@ -8,10 +8,11 @@ from tools.pipeline.scoring import cap_model_data_quality, manual_review_flag, o
 
 
 def test_merge_scrape_and_paste_orders_blocks() -> None:
-    m = merge_scrape_and_paste(
+    m, truncated = merge_scrape_and_paste(
         scraped_blocks=[("URL: https://a.test", "Hello A")],
         evidence_paste="粘贴补充",
     )
+    assert not truncated
     assert "Hello A" in m and "人工粘贴" in m and "粘贴补充" in m
 
 

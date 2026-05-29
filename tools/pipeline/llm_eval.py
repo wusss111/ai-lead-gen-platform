@@ -28,8 +28,13 @@ def kb_prompt_block(kb: dict[str, Any], max_chars: int = 4000) -> str:
     return text[:max_chars]
 
 
+_cached_eval_schema: dict[str, Any] | None = None
+
 def _eval_schema() -> dict[str, Any]:
-    return json.loads(SCHEMA_EVAL_RESULT.read_text(encoding="utf-8"))
+    global _cached_eval_schema
+    if _cached_eval_schema is None:
+        _cached_eval_schema = json.loads(SCHEMA_EVAL_RESULT.read_text(encoding="utf-8"))
+    return _cached_eval_schema
 
 
 def build_messages(
@@ -110,15 +115,26 @@ def run_llm_eval(
     kb_path: Path = DEFAULT_KB_PATH,
     catalog_max_chars: int = 24000,
     model: str | None = None,
+    evidence_max_chars: int = 8000,
+    catalog_data: dict[str, Any] | None = None,
+    kb_data: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if not catalog_path.is_file():
-        raise FileNotFoundError(f"缺少 catalog: {catalog_path}")
-    catalog = load_json(catalog_path)
+    # 支持调用方传入预加载的数据（避免子进程每行重复读磁盘）
+    catalog = catalog_data
+    if catalog is None:
+        if not catalog_path.is_file():
+            raise FileNotFoundError(f"缺少 catalog: {catalog_path}")
+        catalog = load_json(catalog_path)
     catalog_block = compact_catalog_for_prompt(catalog, catalog_max_chars)
     ver = str(catalog.get("catalog_version", ""))
     kb_block = ""
-    if kb_path.is_file():
-        kb_block = kb_prompt_block(load_json(kb_path))
+    kb = kb_data
+    if kb is None and kb_path.is_file():
+        kb = load_json(kb_path)
+    if kb:
+        kb_block = kb_prompt_block(kb)
+    # 截断 evidence 防止 prompt 超过 LLM 上下文窗口
+    evidence_trimmed = merged_evidence[:evidence_max_chars] if merged_evidence else ""
     messages = build_messages(
         catalog_block=catalog_block,
         kb_block=kb_block,
@@ -127,9 +143,15 @@ def run_llm_eval(
         country_region=country_region,
         target_products=target_products,
         notes=notes,
-        merged_evidence=merged_evidence,
+        merged_evidence=evidence_trimmed,
         catalog_version_note_hint=ver,
     )
-    raw = chat_json(messages, model=model or default_model())
+    from tools.deepseek_client import DeepSeekError
+    try:
+        raw = chat_json(messages, model=model or default_model())
+    except DeepSeekError:
+        raise
+    if "_error" in raw:
+        raise DeepSeekError(raw["_error"])
     validate_eval(raw)
     return raw

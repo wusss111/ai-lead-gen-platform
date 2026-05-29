@@ -47,11 +47,15 @@ def cap_model_data_quality(
     *,
     any_fetch_ok: bool,
     paste_len: int,
+    max_fetch_text_len: int = 0,
 ) -> str:
-    """程序封顶：无成功抓取且粘贴很短时，不高于 medium。"""
+    """程序封顶：无成功抓取且粘贴很短时，不高于 medium。
+    max_fetch_text_len: 抓取的最长文本长度。低于 100 字符视为无效抓取（空壳页面）。
+    """
     order = {"low": 0, "medium": 1, "high": 2}
     inv = {0: "low", 1: "medium", 2: "high"}
     v = order.get(model_dq, 1)
-    if not any_fetch_ok and paste_len < 50:
+    effective_fetch = any_fetch_ok and max_fetch_text_len >= 100
+    if not effective_fetch and paste_len < 50:
         v = min(v, 1)
     return inv[v]

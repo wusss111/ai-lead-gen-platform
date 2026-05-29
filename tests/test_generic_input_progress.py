@@ -17,7 +17,8 @@ def test_merge_extra_into_notes(tmp_path: Path) -> None:
     pd.DataFrame([{"客户代码": "C001", "company_name": "ACME", "website": ""}]).to_excel(inp, index=False, engine="openpyxl")
     df, miss = read_input_xlsx(inp, meta=meta)
     assert not miss
-    assert "C001" in str(df.loc[0, "notes"]) or "客户代码" in str(df.loc[0, "notes"])
+    # 新行为: "客户代码" 优先匹配到 company_name（但已存在则不覆盖），不再随意塞入备注
+    assert df.loc[0, "company_name"] == "ACME"
 
 
 def test_infer_company_from_extra_column() -> None:

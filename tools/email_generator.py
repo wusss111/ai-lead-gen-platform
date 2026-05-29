@@ -64,8 +64,11 @@ def build_email_messages(
         f"合作建议等级：{deal_recommendation}",
         f"建议跟进动作：{next_action}",
         f"语言：{'请根据客户所在国家/地区自动选择最合适的商务沟通语言（' + country_region + '）' if language == 'auto' else '英文' if language == 'en' else '简体中文'}",
-        f"发件人：{from_name}" + (f"（{from_company}）" if from_company else ""),
     ]
+    if from_name:
+        user_lines.append(f"发件人姓名：{from_name}")
+    if from_company:
+        user_lines.append(f"发件人公司：{from_company}（请在邮件中自然地介绍我司产品和优势）")
     if notes:
         user_lines.append(f"备注：{notes}")
     if knowledge_context.strip():

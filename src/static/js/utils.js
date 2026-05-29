@@ -94,6 +94,44 @@ export function badgeForReadStatus(customer) {
   return '<span class="badge badge-yellow">未读</span>';
 }
 
+// ---- Email dropdown toggle (shared across agents) ----
+let _emailDropdownOpen = null;
+
+export function emailToggle(toggleEl) {
+  var dd = toggleEl.parentElement.querySelector('.email-dropdown');
+  if (!dd) return;
+  if (_emailDropdownOpen && _emailDropdownOpen !== dd) {
+    _emailDropdownOpen.classList.remove('open');
+  }
+  dd.classList.toggle('open');
+  if (dd.classList.contains('open')) {
+    _emailDropdownOpen = dd;
+  } else {
+    _emailDropdownOpen = null;
+  }
+}
+
+export function emailPick(itemEl, email) {
+  var dd = itemEl.parentElement;
+  dd.classList.remove('open');
+  _emailDropdownOpen = null;
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(email).catch(function(){});
+  }
+  // Update the primary email display
+  var cell = dd.parentElement;
+  var primary = cell.querySelector('.email-primary');
+  if (primary) {
+    primary.textContent = email;
+    primary.title = email;
+  }
+  // Unselect all items, select this one
+  dd.querySelectorAll('.email-item').forEach(function(el) { el.classList.remove('email-selected'); });
+  itemEl.classList.add('email-selected');
+  // Dispatch custom event so calling code can update state
+  cell.dispatchEvent(new CustomEvent('email-picked', { bubbles: true, detail: { email: email } }));
+}
+
 // ---- Download blob as file ----
 export function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob);

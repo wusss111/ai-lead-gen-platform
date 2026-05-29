@@ -64,7 +64,8 @@
     { "name": "errors", "type": "string" },
     { "name": "overall_score_computed", "type": "float" },
     { "name": "manual_review_flag", "type": "string" },
-    { "name": "eval_json", "type": "string" }
+    { "name": "eval_json", "type": "string" },
+    { "name": "social_profiles", "type": "string" }
   ],
   "weights_default": {
     "product_fit": 0.45,
@@ -95,6 +96,7 @@
     { "field": "reputation_safety_score", "header": "资信安全分" },
     { "field": "deal_recommendation_display", "header": "合作建议" },
     { "field": "manual_review_flag", "header": "需复核" },
-    { "field": "overall_score_computed", "header": "综合分" }
+    { "field": "overall_score_computed", "header": "综合分" },
+    { "field": "social_profiles_display", "header": "社交媒体" }
   ]
 }

@@ -113,6 +113,16 @@ def _inject_knowledge_context(rows: list[dict]) -> None:
         logger.warning("无法导入 vector_store,跳过知识库检索")
         return
 
+    # 先获取全局公司简介（只查一次，所有客户共用）
+    _company_profile = ""
+    try:
+        cp_results = search_multi(["公司文档", "产品信息"], "公司简介 主营业务 核心产品 公司优势", top_k=3, mode="hybrid_rerank")
+        if cp_results:
+            _company_profile = "\n---\n".join(r["chunk"][:500] for r in cp_results)
+            logger.info("KB 公司简介已加载 (%d 条)", len(cp_results))
+    except Exception as e:
+        logger.debug("公司简介检索失败: %s", e)
+
     for row in rows:
         query_parts = []
         tp = str(row.get("target_products", ""))
@@ -126,17 +136,21 @@ def _inject_knowledge_context(rows: list[dict]) -> None:
             query_parts.append(pf[:100])
         query = " ".join(query_parts)[:200]
 
-        if not query.strip():
-            continue
+        chunks = []
+        if _company_profile:
+            chunks.append(_company_profile)
 
-        try:
-            results = search_multi(["产品信息", "公司文档"], query, top_k=3, mode="hybrid_rerank")
-            if results:
-                chunks = [r["chunk"][:500] for r in results]
-                row["knowledge_context"] = "\n---\n".join(chunks)
-                logger.debug("KB context for %s: %d chunks", cn[:20], len(chunks))
-        except Exception as e:
-            logger.debug("知识库检索失败 for %s: %s", cn[:20], e)
+        if query.strip():
+            try:
+                results = search_multi(["产品信息", "公司文档"], query, top_k=2, mode="hybrid_rerank")
+                if results:
+                    chunks.extend(r["chunk"][:500] for r in results)
+            except Exception as e:
+                logger.debug("知识库检索失败 for %s: %s", cn[:20], e)
+
+        if chunks:
+            row["knowledge_context"] = "\n---\n".join(chunks)
+            logger.debug("KB context for %s: %d chunks", cn[:20], len(chunks))
 
 
 def _get_today_send_count(db) -> int:

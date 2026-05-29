@@ -14,6 +14,15 @@ from tools.pipeline.paths import SCHEMA_EXCEL_IO
 
 logger = logging.getLogger(__name__)
 
+# Excel 单元格禁止的控制字符（XML 1.0 规范）
+_EXCEL_ILLEGAL_RE = re.compile('[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]')
+
+def _sanitize_excel_text(val: Any) -> Any:
+    """移除 Excel 单元格不接受的非法控制字符。"""
+    if isinstance(val, str):
+        return _EXCEL_ILLEGAL_RE.sub('', val)
+    return val
+
 # 中文表头 / 别名 → 规范 input 列名（大小写不敏感匹配走 canonical）
 COLUMN_ALIASES_TO_CANON: dict[str, str] = {
     # 公司名称
@@ -64,7 +73,7 @@ _COLUMN_KEYWORDS: dict[str, str] = {
     "网址": "website", "网站": "website", "官网": "website",
     "国家": "country_region", "洲": "country_region",
     "邮箱": "contact_email", "邮件": "contact_email",
-    "电话": "contact_phone", "手机": "contact_phone",
+    "电话": "contact_phone", "手机": "contact_phone", "phone": "contact_phone", "tel": "contact_phone", "mobile": "contact_phone",
     "联系人": "contact_name", "姓名": "contact_name",
     "地址": "contact_address",
     "备注": "notes", "说明": "notes", "留言": "notes",
@@ -125,15 +134,15 @@ def _detect_header_row(df: pd.DataFrame) -> int:
 
 
 def _handle_merged_cells(df: pd.DataFrame) -> pd.DataFrame:
-    """处理合并单元格：对 NaN 进行 forward fill（列方向 + 行方向）。"""
+    """处理合并单元格：对数据行 NaN 进行 forward fill（跳过表头行避免串行）。"""
     out = df.copy()
-    # 逐列 forward fill（当合并单元格导致第一行有值后续行为空时）
     for col in out.columns:
-        if out[col].isna().any():
-            # 只对字符串列做 ffill
-            first_valid = out[col].first_valid_index()
-            if first_valid is not None and first_valid > 0:
-                out[col] = out[col].ffill()
+        # 只处理数据行（跳过表头 row 0），避免表头值被 ffill 传播到数据
+        if len(out) <= 1:
+            continue
+        data_rows = out[col].iloc[1:]
+        if data_rows.isna().any():
+            out[col].iloc[1:] = data_rows.ffill()
     return out
 
 
@@ -192,6 +201,72 @@ def _standardize_contact_formats(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def _validate_field_values(df: pd.DataFrame) -> pd.DataFrame:
+    """校验字段值合法性，清除明显无效的数据。"""
+    out = df.copy()
+
+    # contact_email 必须含 @
+    if "contact_email" in out.columns:
+        def valid_email(v: Any) -> str:
+            if v is None:
+                return ""
+            s = str(v).strip()
+            if not s or s in ("nan", "None", ""):
+                return ""
+            if "@" not in s or len(s) < 6:
+                return ""
+            if any(s.lower().endswith(ext) for ext in (".jpg", ".png", ".gif", ".css", ".js", ".pdf")):
+                return ""
+            return s
+        out["contact_email"] = out["contact_email"].apply(valid_email)
+
+    # company_name 不能是纯数字（线索编号等）
+    if "company_name" in out.columns:
+        def valid_name(v: Any) -> str:
+            if v is None:
+                return ""
+            s = str(v).strip()
+            if not s or s in ("nan", "None", ""):
+                return ""
+            # 纯数字 → 清空（后续 runner.py 会从 notes 中重新推断）
+            if re.match(r"^\d{4,}$", s):
+                return ""
+            # URL → 清空（避免网址被当成公司名）
+            if s.lower().startswith(("http://", "https://", "www.")):
+                return ""
+            return s
+        out["company_name"] = out["company_name"].apply(valid_name)
+
+    # contact_phone 至少 7 位数字
+    if "contact_phone" in out.columns:
+        def valid_phone(v: Any) -> str:
+            if v is None:
+                return ""
+            s = str(v).strip()
+            if not s or s in ("nan", "None", ""):
+                return ""
+            digits = re.sub(r"\D", "", s)
+            if len(digits) < 7:
+                return ""
+            return s
+        out["contact_phone"] = out["contact_phone"].apply(valid_phone)
+
+    # contact_name 不能是纯数字
+    if "contact_name" in out.columns:
+        def valid_contact(v: Any) -> str:
+            if v is None:
+                return ""
+            s = str(v).strip()
+            if not s or s in ("nan", "None", ""):
+                return ""
+            if re.match(r"^\d+$", s):
+                return ""
+            return s
+        out["contact_name"] = out["contact_name"].apply(valid_contact)
+
+    return out
+
+
 def _clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     """智能清洗 DataFrame：空行列 → 表头检测 → 合并单元格 → 格式标准化。"""
     logger.info("开始数据清洗: shape=%s", df.shape)
@@ -215,15 +290,22 @@ def _clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         df.columns = new_cols
         logger.info("检测到表头在第 %d 行，重置列名", header_row + 1)
     elif header_row < 0:
-        # 无法检测到表头，生成默认列名
-        df.columns = [f"col_{i}" for i in range(df.shape[1])]
-        logger.info("未检测到表头，使用默认列名 col_0..col_%d", df.shape[1] - 1)
+        # 无法检测到表头——但如果当前列名像合法表头（pd.read_excel 已用第一行当列名），保留即可
+        current_names = [str(c) for c in df.columns]
+        if _is_header_row(current_names):
+            logger.info("未检测到嵌入表头，但当前列名已是合法表头，保留")
+        else:
+            df.columns = [f"col_{i}" for i in range(df.shape[1])]
+            logger.info("未检测到表头，使用默认列名 col_0..col_%d", df.shape[1] - 1)
 
     # 4. 去除全空行（可能来自表头分离后的残留）
     df = _strip_empty_rows_cols(df)
 
     # 5. 标准化格式
     df = _standardize_contact_formats(df)
+
+    # 6. 校验字段值（清除纯数字公司名、无@邮箱等）
+    df = _validate_field_values(df)
 
     logger.info("数据清洗完成: shape=%s, columns=%s", df.shape, list(df.columns))
     return df
@@ -305,31 +387,10 @@ def canonical_input_names(meta: dict[str, Any]) -> list[str]:
 
 
 def _maybe_fill_notes_from_contacts(df: pd.DataFrame) -> pd.DataFrame:
-    """notes 为空时，由联系人列拼接（与 map_zh 脚本行为一致）。"""
-    if "notes" not in df.columns:
-        return df
-
-    def build_notes(row: pd.Series) -> str:
-        cur = row.get("notes")
-        if cur is not None and not (isinstance(cur, float) and pd.isna(cur)):
-            s0 = str(cur).strip()
-            if s0:
-                return s0
-        parts: list[str] = []
-        for label, key in _NOTES_FROM_CONTACTS:
-            if key not in row.index:
-                continue
-            v = row.get(key)
-            if v is None or (isinstance(v, float) and pd.isna(v)):
-                continue
-            s = str(v).strip()
-            if s:
-                parts.append(f"{label}: {s}")
-        return " | ".join(parts)
-
-    out = df.copy()
-    out["notes"] = out.apply(build_notes, axis=1)
-    return out
+    """notes 为空时，不自动生成备注，改为保持空值。
+    联系人信息已存放在独立列中，无需拼入 notes 造成杂乱。
+    """
+    return df  # 不再自动生成备注
 
 
 def _fuzzy_match_column(col: str, canon: list[str], threshold: float = 0.55) -> str | None:
@@ -368,29 +429,36 @@ def _fuzzy_match_column(col: str, canon: list[str], threshold: float = 0.55) -> 
 
 
 def normalize_column_map(columns: list[str], canonical: list[str]) -> dict[str, str]:
-    """原始列名 -> 规范列名。冲突时先到先得，避免 rename 产生重复列。"""
+    """原始列名 -> 规范列名。精确匹配优先于模糊匹配，避免数据列被误映射。"""
     lower_to_canon = {c.lower(): c for c in canonical}
     m: dict[str, str] = {}
-    used_targets: set[str] = set()  # 防止多个源列映射到同一目标列
+    used_targets: set[str] = set()
+
+    # 第一遍：精确匹配（别名或大小写不敏感）
     for col in columns:
         key = col.strip()
         target = None
-        # 1. 精确别名匹配
         if key in COLUMN_ALIASES_TO_CANON:
             target = COLUMN_ALIASES_TO_CANON[key]
-        # 2. 大小写不敏感匹配
         elif key.lower() in lower_to_canon:
             target = lower_to_canon[key.lower()]
-        # 3. 模糊匹配兜底
-        else:
-            target = _fuzzy_match_column(key, canonical)
-
         if target and target not in used_targets:
             m[col] = target
             used_targets.add(target)
         elif target:
-            logger = logging.getLogger(__name__)
             logger.warning("列 '%s' 映射到 '%s'，但该目标已被占用，跳过", col, target)
+
+    # 第二遍：未匹配的列才尝试模糊匹配
+    for col in columns:
+        if col in m:
+            continue
+        key = col.strip()
+        target = _fuzzy_match_column(key, canonical)
+        if target and target not in used_targets:
+            m[col] = target
+            used_targets.add(target)
+        elif target:
+            logger.warning("列 '%s' 模糊匹配到 '%s'，但该目标已被占用，跳过", col, target)
     return m
 
 
@@ -414,12 +482,72 @@ def read_input_xlsx(path: Path, *, meta: dict[str, Any] | None = None) -> tuple[
     return df, missing
 
 
+def _try_extract_website_from_text(text: str) -> str | None:
+    """从一段文本中提取最可能的公司网址。"""
+    if not text:
+        return None
+    # 匹配 URL 模式
+    urls = re.findall(r'(?:https?://)?(?:www\.)?[a-zA-Z0-9][-a-zA-Z0-9]*\.[a-zA-Z]{2,}(?:/[^\s，。,；;|\n]*)?', text)
+    if not urls:
+        return None
+    # 过滤常见无关域名
+    skip_domains = {"example.com", "domain.com", "alibaba.com", "linkedin.com", "facebook.com",
+                    "twitter.com", "youtube.com", "instagram.com", "google.com", "gmail.com",
+                    "yahoo.com", "hotmail.com", "outlook.com", "163.com", "qq.com", "126.com"}
+    for u in urls:
+        u = u.strip().rstrip("/.")
+        if not u.startswith("http"):
+            u = "https://" + u
+        # 提取域名
+        domain = re.sub(r'^https?://(?:www\.)?', '', u).split('/')[0].lower()
+        if domain not in skip_domains and not domain.endswith(('.jpg', '.png', '.pdf', '.css', '.js')):
+            return u
+    return None
+
+
 def merge_extra_columns_into_notes(df: pd.DataFrame, meta: dict[str, Any]) -> pd.DataFrame:
-    """将未映射到规范输入名的其它列并入 notes，便于模型利用任意表格字段。"""
+    """未映射列优先匹配到规范字段（website/email/phone 等），其余才并入 notes。"""
     canon = set(canonical_input_names(meta))
     extras = [str(c) for c in df.columns if str(c) not in canon]
     if not extras:
         return df
+
+    # 对每个额外列，尝试映射到有用的规范字段
+    extra_to_target: dict[str, str] = {}
+    for c in extras:
+        cl = c.lower()
+        # 尝试匹配 website
+        if any(kw in cl for kw in ("网址", "网站", "url", "website", "domain", "官网", "网页")):
+            extra_to_target[c] = "website"
+        elif any(kw in cl for kw in ("邮箱", "email", "e-mail", "邮件")):
+            extra_to_target[c] = "contact_email"
+        elif any(kw in cl for kw in ("电话", "phone", "tel", "手机", "固话")):
+            extra_to_target[c] = "contact_phone"
+        elif any(kw in cl for kw in ("地址", "address")):
+            extra_to_target[c] = "contact_address"
+        elif any(kw in cl for kw in ("联系人", "姓名", "contact", "name")):
+            extra_to_target[c] = "contact_name"
+        elif any(kw in cl for kw in ("公司名", "公司", "企业", "company", "客户名")):
+            extra_to_target[c] = "company_name"
+        elif any(kw in cl for kw in ("国家", "country", "地区")):
+            extra_to_target[c] = "country_region"
+
+    out = df.copy()
+
+    # 回填：将匹配到的额外列值写入目标列（当目标列为空时）
+    for extra_col, target_col in extra_to_target.items():
+        if target_col not in out.columns:
+            out[target_col] = ""
+        # 只在目标列为空时才覆盖
+        for idx in out.index:
+            target_val = out.at[idx, target_col]
+            if target_val is None or (isinstance(target_val, float) and pd.isna(target_val)) or str(target_val).strip() == "":
+                v = out.at[idx, extra_col]
+                if v is not None and not (isinstance(v, float) and pd.isna(v)):
+                    out.at[idx, target_col] = str(v).strip()
+
+    # 剩余未映射的额外列 → 拼入 notes
+    unmapped = [c for c in extras if c not in extra_to_target]
 
     def augment(row: pd.Series) -> str:
         parts: list[str] = []
@@ -428,7 +556,7 @@ def merge_extra_columns_into_notes(df: pd.DataFrame, meta: dict[str, Any]) -> pd
             s0 = str(cur).strip()
             if s0:
                 parts.append(s0)
-        for c in extras:
+        for c in unmapped:
             v = row.get(c)
             if v is None or (isinstance(v, float) and pd.isna(v)):
                 continue
@@ -437,8 +565,19 @@ def merge_extra_columns_into_notes(df: pd.DataFrame, meta: dict[str, Any]) -> pd
                 parts.append(f"{c}: {s}")
         return " | ".join(parts)
 
-    out = df.copy()
-    out["notes"] = out.apply(augment, axis=1)
+    if unmapped:
+        out["notes"] = out.apply(augment, axis=1)
+
+    # 从 notes 中尝试提取 website（当 website 列仍为空时）
+    if "website" in out.columns:
+        for idx in out.index:
+            w = out.at[idx, "website"]
+            if w is None or (isinstance(w, float) and pd.isna(w)) or str(w).strip() == "":
+                notes_val = out.at[idx, "notes"]
+                extracted = _try_extract_website_from_text(str(notes_val) if notes_val else "")
+                if extracted:
+                    out.at[idx, "website"] = extracted
+
     return out
 
 
@@ -488,6 +627,25 @@ def buyer_seller_role_display_zh(raw: str) -> str:
     return raw or ""
 
 
+def social_profiles_display_zh(raw: str) -> str:
+    """将 JSON 数组转为可读的社交媒体账号摘要。"""
+    if not raw:
+        return ""
+    try:
+        profiles = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return raw
+    if not isinstance(profiles, list):
+        return raw
+    parts = []
+    for p in profiles:
+        platform = p.get("platform", "")
+        handle = p.get("handle", "")
+        if platform and handle:
+            parts.append(f"{platform}: {handle}")
+    return "; ".join(parts)
+
+
 def summary_export_spec(meta: dict[str, Any]) -> list[tuple[str, str]]:
     """(内部字段名, Excel 列标题)。"""
     spec = meta.get("summary_export_columns")
@@ -512,6 +670,7 @@ def summary_export_spec(meta: dict[str, Any]) -> list[tuple[str, str]]:
             ("deal_recommendation_display", "合作建议"),
             ("manual_review_flag", "需复核"),
             ("overall_score_computed", "综合分"),
+            ("social_profiles_display", "社交媒体"),
         ]
     out: list[tuple[str, str]] = []
     for item in spec:
@@ -563,6 +722,9 @@ def build_summary_export_df(
             elif field == "buyer_seller_role_display":
                 raw = row.get("buyer_seller_role", "")
                 val = buyer_seller_role_display_zh(str(raw))
+            elif field == "social_profiles_display":
+                raw = row.get("social_profiles", "")
+                val = social_profiles_display_zh(str(raw))
             elif field == "_source_row_1":
                 if source_row_1based is not None and j < len(source_row_1based):
                     val = int(source_row_1based[j])
@@ -608,8 +770,11 @@ def write_result_xlsx(
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     with pd.ExcelWriter(path, engine="openpyxl") as writer:
+        # 清理 Excel 非法字符
+        df = df.map(_sanitize_excel_text)
         df.to_excel(writer, sheet_name=main_sheet_name, index=False)
         if detail_df is not None and not detail_df.empty:
+            detail_df = detail_df.map(_sanitize_excel_text)
             detail_df.to_excel(writer, sheet_name="Detail", index=False)
 
     if not highlight_manual_review:

@@ -9,7 +9,22 @@ import time as _time
 from pathlib import Path
 from typing import Any
 
+import httpx
 from openai import OpenAI
+
+# ── Exception hierarchy ──
+
+class DeepSeekError(RuntimeError):
+    """Base exception for DeepSeek API errors."""
+
+class DeepSeekCancelled(DeepSeekError):
+    """Task was cancelled by user signal."""
+
+class DeepSeekRetriesExhausted(DeepSeekError):
+    """All retry attempts failed."""
+
+class DeepSeekConnectionError(DeepSeekError):
+    """Network or timeout error after retries."""
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +70,10 @@ def make_client() -> OpenAI:
             "$env:DEEPSEEK_API_KEY='sk-...'；3) 用户级持久: setx DEEPSEEK_API_KEY \"sk-...\"（新开终端生效）。"
         )
     base = (os.environ.get("DEEPSEEK_BASE_URL") or DEFAULT_BASE_URL).strip().rstrip("/")
-    return OpenAI(api_key=key, base_url=base)
+    return OpenAI(
+        api_key=key, base_url=base,
+        timeout=httpx.Timeout(connect=10.0, read=90.0, write=30.0, pool=5.0),
+    )
 
 
 def chat_json(

@@ -335,7 +335,7 @@ def _write_progress(output_path: Path, next_row: int, total: int, batch_info_out
 
 # ── 并行加速 ──
 
-_PREFETCH_WORKERS = 8   # 预抓取网站并发数
+_PREFETCH_WORKERS = 3   # 预抓取网站并发数（Windows 下保守设置）
 _LLM_WORKERS = 4        # 并行 LLM 评估并发数
 
 
@@ -381,7 +381,10 @@ def _prefetch_all_websites(
                 with _prefetch_lock:
                     _prefetch_cancelled = True
                 return (ws, [], [f"任务已{signal}"])
-        pages, errs = fetch_pages_for_website_field(ws, cache_dir=cache_dir, timeout_sec=10.0, skip_playwright=True)
+        pages, errs = fetch_pages_for_website_field(
+            ws, cache_dir=cache_dir, max_pages=10, timeout_sec=10.0,
+            skip_playwright=True,
+        )
         return (ws, pages, errs)
 
     with ThreadPoolExecutor(max_workers=_PREFETCH_WORKERS) as pool:
@@ -392,7 +395,12 @@ def _prefetch_all_websites(
         while pending:
             done, pending = wait(pending, timeout=0.5, return_when="FIRST_COMPLETED")
             for f in done:
-                ws, pages, errs = f.result()
+                try:
+                    ws, pages, errs = f.result(timeout=20.0)
+                except Exception as _fe:
+                    _ws = futures[f]
+                    logger.warning("预抓取线程异常 (%s): %s", _ws, _fe)
+                    ws, pages, errs = _ws, [], [f"预抓取异常: {_fe}"]
                 with lock:
                     cache[ws] = (pages, errs)
                     _done_count += 1
@@ -560,7 +568,7 @@ def run_pipeline(
     )
 # ═══ 两阶段并行处理 ═══
 # 阶段 1：预抓取所有网站（并行 I/O）→ 阶段 2：并行逐行评估 + 实时入库
-    _WORKERS = 4  # 并行 LLM 评估行数
+    _WORKERS = 2  # LLM 评估并发数（Windows 下不宜太多）
     detail_rows: list[dict[str, Any]] = []
     _batch_evaluated: dict[tuple[str, str], dict[str, Any]] = {}  # B5 去重缓存
     _write_lock = threading.Lock()  # 单一锁保护所有共享状态（DF/DB/去重/详情/计数器）
@@ -935,6 +943,14 @@ def run_pipeline(
     if _cancel_raised is not None:
         raise _cancel_raised
 
+    # ═══ 释放预抓取缓存（已完成评估，不再需要网站数据） ═══
+    try:
+        if _prefetch_cache:
+            _prefetch_cache.clear()
+        del _prefetch_cache
+    except NameError:
+        pass
+
     # ═══ 后处理：输出 Excel ═══
     detail_df = pd.DataFrame(detail_rows) if detail_rows else None
     if not detail_sheet:
@@ -1013,4 +1029,10 @@ def run_pipeline(
                 "has_more": has_more,
             }
         )
+    # 释放本批大对象，让 Python 有机会回收内存
+    import gc as _gc
+    detail_rows.clear()
+    _batch_evaluated.clear()
+    del summary_part
+    _gc.collect()
     return df

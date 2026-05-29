@@ -9,8 +9,12 @@ from __future__ import annotations
 
 import logging
 import threading
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# 模型缓存放到项目 var 下，避免 Windows Temp 清理/权限问题
+_CACHE_DIR = Path(__file__).resolve().parents[1] / "var" / "embedding_cache"
 
 # 优先轻量 multilingual 模型（~120MB，下载快，中英兼顾）
 _MODEL_CANDIDATES = [
@@ -31,11 +35,12 @@ class EmbeddingService:
     def __init__(self, model_name: str = ""):
         from fastembed import TextEmbedding
 
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
         errors = []
         for cand in (_MODEL_CANDIDATES if not model_name else [model_name]):
             try:
                 logger.info("尝试加载嵌入模型 %s ...", cand)
-                self._model: TextEmbedding = TextEmbedding(model_name=cand)
+                self._model: TextEmbedding = TextEmbedding(model_name=cand, cache_dir=str(_CACHE_DIR))
                 self._model_name = cand
                 # 根据模型类型设置 query/passage 前缀
                 if "e5" in cand.lower():

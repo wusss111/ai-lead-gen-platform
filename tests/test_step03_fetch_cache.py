@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tools.pipeline.fetch_cache import expand_urls, extract_text_from_html, fetch_pages_for_website_field
+from tools.pipeline.fetch_cache import expand_base_urls, extract_text_from_html, fetch_pages_for_website_field
 
 
 def test_expand_urls_adds_common_paths() -> None:
-    u = expand_urls("example.com")
+    u = expand_base_urls("example.com")
     assert any("/about" in x for x in u)
     assert u[0].startswith("https://example.com")
 

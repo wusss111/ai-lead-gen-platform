@@ -87,12 +87,17 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def _user_middleware(request: Request, call_next):
-        """Attach current_user to request.state for template rendering."""
+        """Attach current_user to request.state for template rendering.
+        Redirect unauthenticated page visits to /login (API calls get 401 JSON)."""
+        path = request.url.path
+        _public = path in ("/login", "/health", "/") or path.startswith("/track/") or path.startswith("/static/")
         try:
             user = _auth_get_user(request, config)
         except Exception:
             user = None
         request.state.current_user = user
+        if not user and not _public and not path.startswith("/api/"):
+            return RedirectResponse(url=f"/login?redirect={path}", status_code=303)
         response = await call_next(request)
         return response
 

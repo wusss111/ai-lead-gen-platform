@@ -13,7 +13,8 @@ class InquiryMailConfig:
     smtp_username: str = ""
     smtp_password: str = ""
     from_email: str = ""
-    from_name: str = "外贸团队"
+    from_name: str = ""
+    from_company: str = ""
     use_tls: bool = True
     use_ssl: bool = False
     send_delay_seconds: float = 10.0
@@ -38,7 +39,8 @@ class InquiryMailConfig:
             smtp_username=(os.environ.get("SMTP_USER") or "").strip(),
             smtp_password=(os.environ.get("SMTP_PASSWORD") or "").strip(),
             from_email=(os.environ.get("SMTP_FROM_EMAIL") or "").strip(),
-            from_name=(os.environ.get("SMTP_FROM_NAME") or "外贸团队").strip(),
+            from_name=(os.environ.get("SMTP_FROM_NAME") or "").strip(),
+            from_company=(os.environ.get("SMTP_FROM_COMPANY") or "").strip(),
             reply_to_email=(os.environ.get("SMTP_REPLY_TO") or "").strip(),
             use_tls=(os.environ.get("SMTP_USE_TLS") or "true").lower() != "false",
             use_ssl=(os.environ.get("SMTP_USE_SSL") or "false").lower() == "true",

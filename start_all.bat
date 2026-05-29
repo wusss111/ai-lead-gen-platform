@@ -9,6 +9,14 @@ echo   Customer Platform - Starting All Services
 echo ============================================
 echo.
 
+echo [0/4] Cleaning old processes...
+taskkill /f /im python.exe >nul 2>&1
+taskkill /f /im rq.exe >nul 2>&1
+taskkill /f /im redis-server.exe >nul 2>&1
+timeout /t 2 /nobreak >nul
+echo   Old processes cleaned
+echo.
+
 echo [1/4] Starting Redis...
 start "Redis" "%ROOT%var\redis\redis-server.exe" --port 6379 --loglevel warning
 ping -n 3 127.0.0.1 >nul

@@ -43,7 +43,7 @@ def test_excel_io_loads() -> None:
     names = [c["name"] for c in data["input_columns"]]
     assert "company_name" in names and "evidence_paste" in names
     assert "contact_address" in names
-    assert len(data.get("summary_export_columns") or []) == 19
+    assert len(data.get("summary_export_columns") or []) == 20
     w = data["weights_default"]
     assert abs(w["product_fit"] + w["capability"] + w["reputation_safety"] - 1.0) < 1e-6
 

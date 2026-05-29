@@ -88,9 +88,9 @@ def send_single_email(
 
 
 def send_emails_batch(
-    config: SmtpConfig | None = None,
     emails: list[dict[str, Any]],
     *,
+    config: SmtpConfig | None = None,
     delay_seconds: float = 45.0,
     progress_callback: Callable | None = None,
     config_factory: Callable[[dict[str, Any]], SmtpConfig] | None = None,

@@ -22,6 +22,24 @@ services:
     volumes:
       - redis_data:/data
 
+  # ---- PostgreSQL ----
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: platform
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+      POSTGRES_INITDB_ARGS: "--locale=C.UTF-8"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform -d platform"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
   # ---- Web 服务 (FastAPI + uvicorn) ----
   web:
     build:
@@ -38,6 +56,7 @@ services:
     restart: unless-stopped
     environment:
       - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://platform:${POSTGRES_PASSWORD:-change_me}@postgres:5432/platform
       - PLATFORM_DATA_DIR=/data
     env_file:
       - .env
@@ -47,6 +66,8 @@ services:
       - ./var/gmail_token.json:/app/var/gmail_token.json:ro
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
@@ -67,6 +88,7 @@ services:
     restart: unless-stopped
     environment:
       - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://platform:${POSTGRES_PASSWORD:-change_me}@postgres:5432/platform
       - PLATFORM_DATA_DIR=/data
     env_file:
       - .env
@@ -76,6 +98,8 @@ services:
       - ./var/gmail_token.json:/app/var/gmail_token.json:ro
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
 
   # ---- RQ Worker: 邮件生成 ----
@@ -90,6 +114,7 @@ services:
     restart: unless-stopped
     environment:
       - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://platform:${POSTGRES_PASSWORD:-change_me}@postgres:5432/platform
       - PLATFORM_DATA_DIR=/data
     env_file:
       - .env
@@ -99,6 +124,8 @@ services:
       - ./var/gmail_token.json:/app/var/gmail_token.json:ro
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
 
   # ---- RQ Worker: 邮件发送 ----
@@ -113,6 +140,7 @@ services:
     restart: unless-stopped
     environment:
       - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://platform:${POSTGRES_PASSWORD:-change_me}@postgres:5432/platform
       - PLATFORM_DATA_DIR=/data
     env_file:
       - .env
@@ -122,6 +150,8 @@ services:
       - ./var/gmail_token.json:/app/var/gmail_token.json:ro
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
 
   # ---- Nginx 反向代理 ----
@@ -141,4 +171,5 @@ services:
 volumes:
   redis_data:
   platform_data:
+  pgdata:
   nginx_logs:

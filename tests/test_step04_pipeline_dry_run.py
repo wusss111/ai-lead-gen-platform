@@ -44,6 +44,7 @@ def test_dry_run_no_fetch_writes_output(tmp_path: Path) -> None:
         "合作建议",
         "需复核",
         "综合分",
+        "社交媒体",
     ]
     assert "试运行" in str(got.loc[0, "产品匹配说明"])
     detail = pd.read_excel(out, sheet_name="Detail", engine="openpyxl")

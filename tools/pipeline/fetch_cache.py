@@ -102,12 +102,17 @@ def _try_curl_cffi_fetch(url: str, timeout_sec: float) -> tuple[str, str] | None
     return None
 
 
+import threading as _threading
+_pw_lock = _threading.Lock()
+
 def _try_playwright_fetch(url: str, timeout_sec: float) -> tuple[str, str] | None:
     """用 Playwright 无头浏览器渲染 JavaScript 后抓取。返回 (html, text) 或 None。
     仅当静态抓取未找到邮箱时触发（开销大，作为最后兜底）。"""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
+        return None
+    if not _pw_lock.acquire(timeout=timeout_sec):
         return None
     try:
         with sync_playwright() as p:
@@ -121,6 +126,8 @@ def _try_playwright_fetch(url: str, timeout_sec: float) -> tuple[str, str] | Non
             return html, text
     except Exception:
         return None
+    finally:
+        _pw_lock.release()
 
 
 def _playwright_discover_contact_pages(base_url: str, timeout_sec: float = 15.0) -> list[dict[str, Any]]:
@@ -131,6 +138,9 @@ def _playwright_discover_contact_pages(base_url: str, timeout_sec: float = 15.0)
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
+        return []
+
+    if not _pw_lock.acquire(timeout=timeout_sec):
         return []
 
     results: list[dict[str, Any]] = []
@@ -194,6 +204,8 @@ def _playwright_discover_contact_pages(base_url: str, timeout_sec: float = 15.0)
             browser.close()
     except Exception:
         pass
+    finally:
+        _pw_lock.release()
     return results
 
 
