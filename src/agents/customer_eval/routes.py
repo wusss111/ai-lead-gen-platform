@@ -155,7 +155,7 @@ async def create_job(
     db.commit()
 
     logger.info("Job enqueued job_id=%s rq_id=%s dry_run=%s format=%s", job_id, rq_job.id, dry_run, ext)
-    return JSONResponse({"job_id": job_id, "rq_job_id": rq_job.id, "status": "queued", "format": ext})
+    return JSONResponse({"job_id": job_id, "rq_job_id": rq_job.id, "status": "queued", "format": ext, "total_rows": len(df_probe)})
 
 
 @router.post("/api/jobs/{job_id}/continue")
@@ -229,6 +229,36 @@ def get_job_status(
     if info.get("progress"):
         body["progress"] = info["progress"]
 
+    # 读取 Redis 中持久化的 next_job_id（rq_job_id.txt 被覆盖后仍可续跑）
+    try:
+        from redis import Redis as _R
+        _red = _R.from_url(config.redis_url)
+        next_raw = _red.get(f"job_next:{job_id}")
+        if next_raw:
+            next_data = json.loads(next_raw if isinstance(next_raw, str) else next_raw.decode("utf-8"))
+            body["next_job_id"] = next_data.get("next_job_id")
+            body["batch_rows"] = next_data.get("batch_rows")
+            body["total_rows"] = next_data.get("total_rows")
+            body["batch_end_exclusive"] = next_data.get("batch_end")
+            if not body.get("progress"):
+                body["progress"] = {}
+            body["progress"]["next_job_id"] = next_data.get("next_job_id")
+            body["progress"]["batch_rows"] = next_data.get("batch_rows")
+    except Exception:
+        logger.warning("Failed to read job_next from Redis for %s", job_id, exc_info=True)
+
+    # 从 DB 获取 total_rows，让前端提前显示批次信息（如 "批次 1/17"）
+    from src.core.database import get_db
+    db = get_db()
+    batch_row = db.execute(
+        "SELECT total_rows FROM evaluation_batch WHERE id=?", (job_id,)
+    ).fetchone()
+    if batch_row and batch_row["total_rows"]:
+        body["total_rows"] = batch_row["total_rows"]
+    # 注入 rows_completed 作为前端的 _totalAccumulated 回退值（即使 Redis job_next 过期也能正确显示批次号）
+    if batch_row and batch_row["rows_completed"]:
+        body["rows_completed"] = batch_row["rows_completed"]
+
     # Fetch Job object for result/error details
     rq_id = _folder_rq_job_id(config, job_id)
     conn = _job_connection(config)
@@ -238,7 +268,9 @@ def get_job_status(
         raise HTTPException(404, "Job not found") from None
 
     if job.is_finished:
-        body["result"] = job.result
+        body["result"] = job.result or {}
+        if body["result"].get("next_job_id"):
+            body["next_job_id"] = body["result"]["next_job_id"]
     elif job.is_failed:
         body["error"] = job.exc_info or "Job failed"
     return body

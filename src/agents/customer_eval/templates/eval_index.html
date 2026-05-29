@@ -3,6 +3,10 @@
 
 {% block head_extra %}
 <link rel="stylesheet" href="/static/customer-eval/css/eval.css" />
+<script>
+// 页面加载时清除旧的僵尸任务追踪
+localStorage.removeItem('platform_active_jobs');
+</script>
 {% endblock %}
 
 {% block content %}
@@ -167,5 +171,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script type="module" src="/static/customer-eval/js/eval_main.js?v=20260526d"></script>
+<script type="module" src="/static/customer-eval/js/eval_main.js?v=20260529b"></script>
 {% endblock %}

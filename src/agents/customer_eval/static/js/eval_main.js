@@ -15,6 +15,11 @@ const batchSizeGroup = el('batchSizeGroup');
 
 let activeTab = 'xlsx';
 let _currentPollingJobId = null;
+let _totalAccumulated = 0;   // 跨批次累计已处理行数
+let _grandTotal = 0;         // 总行数（从第一批获取）
+let _batchIndex = 1;         // 当前第几批（后备）
+let _batchSize = 100;        // 批大小（首批 progress 回来后更新）
+let _seenTransition = new Set();  // 已处理的批次切换（防重复累加）
 
 // ---- Tab switching ----
 window.switchTab = function (tabName) {
@@ -94,6 +99,7 @@ async function submitFileEval() {
     if (!r.ok) { const txt = await r.text(); showToast('上传失败: ' + txt.slice(0, 200), 'error'); setLoading(false); return; }
     const data = await r.json();
     if (window.__trackJob) window.__trackJob(data.job_id, file.name, 'customer-eval');
+    if (data.total_rows) { _grandTotal = data.total_rows; _batchIndex = 1; }
     updateBar(6, '已入队，等待 Worker...', '排队');
     await pollJob(data.job_id);
   } catch (err) {
@@ -155,6 +161,22 @@ async function pollJob(jobId) {
         return;
       }
       const j = await r.json();
+      // 批次切换检测：API 注入了 next_job_id 说明上一批已完成
+      const transId = j.next_job_id || (j.progress && j.progress.next_job_id);
+      if (transId && !_seenTransition.has(transId)) {
+        _seenTransition.add(transId);
+        const rows = j.batch_rows || (j.progress && j.progress.batch_rows) || 0;
+        if (rows > 0) {
+          _totalAccumulated += rows;
+        }
+        if (j.total_rows) _grandTotal = j.total_rows;
+      }
+      // DB rows_completed 作为回退：即使 Redis job_next 过期也能正确显示批次号
+      // （rows_completed 表示所有已完成批次的总行数，比 _totalAccumulated 更权威）
+      if (j.rows_completed && j.rows_completed > _totalAccumulated) {
+        _totalAccumulated = j.rows_completed;
+        if (j.total_rows) _grandTotal = j.total_rows;
+      }
       const st = normJobStatus(j.status);
       updateProgress(j, st);
       if (st !== lastSt) {
@@ -185,17 +207,44 @@ async function pollJob(jobId) {
         return;
       }
       if (st === 'finished') {
+        // 检查是否是错误暂停（非用户主动暂停）
+        if (j.result && j.result.error && j.result.paused) {
+          updateBar(100, '自动恢复中…', '恢复');
+          resultArea.innerHTML = '<div class="result-item warn"><strong>评估意外中断，自动恢复中…</strong></div>';
+          _currentPollingJobId = null; setLoading(false);
+          el('progressActions').style.display = 'none';
+          setTimeout(() => window.continueBatchV2(jobId), 1500);
+          return;
+        }
         // 检查是否是被取消后结束的
         if (j.result && j.result.control === 'cancel') {
           updateBar(100, '已取消', '取消');
           resultArea.innerHTML = '<div class="result-item error"><strong>已取消</strong> — ' + (j.result.rows || '?') + ' 行已保存。</div>';
           el('progressActions').style.display = 'none';
-          _currentPollingJobId = null;
+          _currentPollingJobId = null; _totalAccumulated = 0;
           if (el('btnCancel')._cancelTimeout) { clearTimeout(el('btnCancel')._cancelTimeout); }
           setLoading(false);
           if (window.__removeJob) window.__removeJob(jobId);
           return;
         }
+        // 自动续跑：从 progress meta（优先）或 result 中读取 next_job_id
+        const nextId = (j.progress && j.progress.next_job_id)
+                    || j.next_job_id
+                    || (j.result && j.result.next_job_id);
+        if (nextId) {
+          const batchRows = (j.progress && j.progress.batch_rows)
+                         || (j.result && j.result.rows)
+                         || 0;
+          _totalAccumulated += batchRows;
+          if (!_grandTotal && j.result && j.result.total_rows) {
+            _grandTotal = j.result.total_rows;
+          }
+          _batchIndex += 1;
+          if (window.__trackJob) window.__trackJob(nextId, '评估续批', 'customer-eval');
+          setTimeout(() => pollJob(nextId), 500);
+          return;
+        }
+        _totalAccumulated = 0; _grandTotal = 0; _batchIndex = 1;
         updateBar(100, '已完成', '完成'); showResult(j, jobId); return;
       }
       if (j.progress && j.progress.control === 'pause') {
@@ -230,22 +279,33 @@ async function pollJob(jobId) {
 }
 
 function updateProgress(j, status) {
+  // 从 API 提前获取总行数，不等第一批结束就能显示 "批次 1/N"
+  if (!_grandTotal && j.total_rows) {
+    _grandTotal = j.total_rows;
+  }
   const p = j.progress;
   progressCard.style.display = 'block';
   if (!p || typeof p !== 'object') {
-    if (status === 'queued') updateBar(6, '排队中...', '排队中');
-    else if (status === 'started') { updateBar(12, '处理中...', '启动中'); updatePhaseStepper('ready', 0, 0); }
+    // 新批次无进度数据时，用缓存的 _batchSize + _totalAccumulated 拼批次号
+    const curBatch = _grandTotal > 0 ? Math.floor(_totalAccumulated / _batchSize) + 1 : _batchIndex;
+    const totBatches = _grandTotal > 0 ? Math.ceil(_grandTotal / _batchSize) : 0;
+    const prefix = totBatches > 1 ? '批次 ' + curBatch + '/' + totBatches + '  ' : '';
+    if (status === 'queued') updateBar(6, prefix + '排队中...', '排队中');
+    else if (status === 'started') { updateBar(12, prefix + '处理中...', '启动中'); updatePhaseStepper('ready', 0, 0); }
     return;
   }
   const cur = Number(p.current) || 0;
   const tot = Number(p.total) || 0;
   const phase = p.phase || '';
+  // 只用 eval 阶段的 total 更新批大小（prefetch 的 tot 是网站数，不能用）
+  if (tot > 0 && (phase === 'eval' || phase === 'write' || phase === 'batch_done')) {
+    _batchSize = tot;
+  }
   let pct = 0;
 
   if (phase === 'write' || phase === 'done') {
     pct = 100;
   } else if (phase === 'prefetch') {
-    // 预抓取阶段：tot>1 表示网站数，有增量进度；否则显示等待中
     if (tot > 1) {
       pct = Math.min(15, Math.round((8 * cur) / tot) + 7);
     } else {
@@ -257,12 +317,25 @@ function updateProgress(j, status) {
     pct = Math.min(99, pct);
   }
 
+  // 跨批显示标签（不影响进度条计算）
   let label;
+  const totalCur = _totalAccumulated + cur;
+  const totalTot = _grandTotal || tot;
+  // 批号计算：优先用缓存的 _batchSize（eval 阶段写入），prefetch 的 tot 是网站数不可用
+  const realBatchSize = (_batchSize > 0 && _grandTotal > 0)
+    ? _batchSize
+    : (tot > 0 && (phase === 'eval' || phase === 'write') ? tot : 100);
+  const currentBatch = realBatchSize > 0 ? Math.floor(_totalAccumulated / realBatchSize) + 1 : _batchIndex;
+  const batchTotal = _grandTotal > 0 && realBatchSize > 0 ? Math.ceil(_grandTotal / realBatchSize) : 0;
+  const batchPrefix = batchTotal > 1 ? ('批次 ' + currentBatch + '/' + batchTotal + '  ') : '';
   if (phase === 'prefetch') {
-    if (tot > 1) label = (p.message || '') + ' · ' + cur + '/' + tot + ' 网站';
-    else label = cur > 0 ? (p.message || '网站抓取完成') : '并行抓取网站中...';
+    if (tot > 1) label = batchPrefix + (p.message || '') + ' · ' + cur + '/' + tot + ' 网站';
+    else label = batchPrefix + (cur > 0 ? (p.message || '网站抓取完成') : '并行抓取网站中...');
   } else {
-    label = (p.message || p.label || '') + (tot > 1 ? ' · ' + cur + '/' + tot + ' 行' : '');
+    label = batchPrefix + (p.message || p.label || '') + (tot > 1 ? ' · ' + cur + '/' + tot + ' 行' : '');
+  }
+  if (_grandTotal > 0) {
+    label = '累计 ' + totalCur + '/' + totalTot + ' · ' + label;
   }
   updateBar(pct, label, phaseLabel(phase));
   updatePhaseStepper(phase, cur, tot, p);
@@ -416,6 +489,15 @@ async function checkCrashedBatches() {
       // 注意：不调 setLoading(true)，上传按钮保持可用
       updateBar(6, '恢复追踪: ' + escapeHtml(running[0].original_filename || running[0].id), '追踪中');
       setTimeout(() => pollJob(running[0].id), 500);
+    }
+
+    // 暂停/中断的批次：自动恢复（不用手动点击）
+    const paused = batches.filter(b => b.status === 'paused' && b.rq_status !== 'started');
+    if (paused.length > 0 && running.length === 0) {
+      paused.forEach(b => {
+        resultArea.innerHTML = '<div class="result-item warn">检测到中断任务（已完成 ' + (b.rows_completed || 0) + ' 行），自动恢复中…</div>';
+        setTimeout(() => window.continueBatchV2(b.id), 800);
+      });
     }
 
     if (crashed.length > 0) {

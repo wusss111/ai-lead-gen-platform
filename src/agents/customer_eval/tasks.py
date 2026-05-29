@@ -1,4 +1,8 @@
-"""RQ Worker task: run customer evaluation pipeline, save results to SQLite."""
+"""RQ Worker task: 客户评估管道 — 子进程架构。
+
+主进程负责：读 Excel → 预抓取网站（httpx）→ 启动子进程 AI 评估 → 收进度。
+子进程隔离内存，退出后 OS 强制回收，彻底解决 pymalloc 累积问题。
+"""
 
 from __future__ import annotations
 
@@ -13,7 +17,7 @@ import pandas as pd
 
 from src.core.database import get_db
 
-# Ensure .env is loaded for worker processes
+# 确保 Worker 进程能读到 .env
 from dotenv import load_dotenv as _load_dotenv
 _env_path = Path(__file__).resolve().parent.parent.parent.parent / ".env"
 if _env_path.is_file():
@@ -40,6 +44,55 @@ def _df_from_partial(input_path: Path, output_path: Path, start_row: int, end_ro
     return df.iloc[start_row:end_row]
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# 子进程入口
+# ═══════════════════════════════════════════════════════════════════════
+
+def _child_entry(args_path: str) -> None:
+    """multiprocessing.Process target：子进程入口。
+
+    通过独立的 Python 子进程运行 worker_child.run_child_batch()。
+    子进程退出后 OS 强制回收全部内存。
+    """
+    import sys
+    sys_path_root = str(Path(__file__).resolve().parent.parent.parent.parent)
+    if sys_path_root not in sys.path:
+        sys.path.insert(0, sys_path_root)
+
+    from src.agents.customer_eval.worker_child import run_child_batch
+    done = run_child_batch(args_path)
+    sys.exit(0 if done > 0 else 1)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 主进程辅助函数
+# ═══════════════════════════════════════════════════════════════════════
+
+def _report(job, payload: dict) -> None:
+    """安全地保存进度到 RQ job meta（主线程专用）。"""
+    if job is None:
+        return
+    try:
+        job.meta["progress"] = payload
+        job.save_meta()
+    except Exception:
+        pass
+
+
+def _save_progress(job_dir: Path, total: int, next_row: int, batch_size: int) -> None:
+    """保存断点续跑进度。"""
+    (job_dir / "progress.json").write_text(
+        json.dumps({"total_rows": total, "next_start_row": next_row,
+                    "batch_size": batch_size, "has_more": True},
+                   ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# 主 RQ Job 入口
+# ═══════════════════════════════════════════════════════════════════════
+
 def run_eval_job(
     folder_job_id: str,
     data_root: str,
@@ -52,9 +105,18 @@ def run_eval_job(
     append_output: bool = False,
     input_ext: str = ".xlsx",
 ) -> dict[str, Any]:
-    """Run eval pipeline, write output.xlsx, and save results to SQLite.
-    Supports .xlsx and .csv inputs (detected via input_ext param).
+    """主进程入口：读 Excel → 预抓取网站 → 子进程 AI 评估 → 自动入队下一批。
+
+    每批：
+      1. 主进程预抓取本批唯一网站（httpx, 3线程）
+      2. 启动子进程（multiprocessing.Process）
+      3. 子进程逐行评估+入库，结束后 OS 回收内存
+      4. 如果还有剩余行，自动入队下一批 RQ Job
     """
+    import gc as _gc
+    import subprocess
+    import sys
+
     root = Path(data_root)
     job_dir = root / "jobs" / folder_job_id
     inp_xlsx = job_dir / "input.xlsx"
@@ -72,37 +134,23 @@ def run_eval_job(
     elif limit is not None:
         eff_batch = max(1, int(limit))
     else:
-        eff_batch = 300  # 默认每批 300 行，安全内存上限
+        eff_batch = 100
 
     from rq import get_current_job
+    from tools.pipeline.runner import _prefetch_all_websites, _ControlExit
+    from tools.pipeline.io_excel import load_excel_io
+    from tools.pipeline.config_merge import merge_meta_with_file, merge_meta_from_env
 
-    from tools.pipeline.runner import run_pipeline, _ControlExit
+    # 在主线程捕获 RQ job 引用（子线程/子进程不能调 get_current_job）
+    _rq_job = get_current_job()
+    _update_batch_status(folder_job_id, "started")
 
-    last_row_save = {"t": 0.0}
-
-    def rq_progress(payload: dict[str, Any]) -> None:
-        job = get_current_job()
-        if job is None:
-            return
-        phase = payload.get("phase")
-        if phase == "row":
-            now = time.monotonic()
-            if now - last_row_save["t"] < _PROGRESS_ROW_MIN_INTERVAL_S:
-                return
-            last_row_save["t"] = now
-        try:
-            job.meta["progress"] = payload
-            job.save_meta()
-        except Exception:
-            logger.debug("job.save_meta skipped", exc_info=True)
-
-    # Redis-based control signal checker
+    # Redis 控制信号
     from redis import Redis as _Redis
-    _redis_url_val = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
-    _ctrl_conn = _Redis.from_url(_redis_url_val)
+    _redis_url = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
+    _ctrl_conn = _Redis.from_url(_redis_url)
 
     def check_control() -> str | None:
-        """Called before each row. Returns 'cancel', 'pause', or None."""
         try:
             val = _ctrl_conn.get(f"job_control:{folder_job_id}")
             if val:
@@ -111,108 +159,312 @@ def run_eval_job(
             pass
         return None
 
-    batch_info: dict[str, Any] = {}
-    logger.info(
-        "RQ folder=%s start: input=%s start_row=%s batch=%s append=%s",
-        folder_job_id, inp, start_row, eff_batch, append_output,
-    )
+    # ── 读 Excel + 预处理 ──
+    meta = load_excel_io()
+    meta = merge_meta_with_file(meta, None)
+    meta = merge_meta_from_env(meta)
 
-    # 检查是否为断点续跑
-    db = get_db()
-    batch_status = db.execute(
-        "SELECT status, rows_completed FROM evaluation_batch WHERE id=?",
-        (folder_job_id,)
-    ).fetchone()
-    is_resume = batch_status and batch_status["status"] == "started" and (batch_status["rows_completed"] or 0) > 0
-    if is_resume:
-        resume_from = batch_status["rows_completed"]
-        logger.info("断点续跑: batch=%s 从第 %d 行继续", folder_job_id, resume_from + 1)
-        start_row = resume_from
-        append_output = True
+    if inp.suffix.lower() == ".csv":
+        from tools.pipeline.io_excel import read_input_csv
+        df, missing = read_input_csv(inp, meta=meta)
+    else:
+        from tools.pipeline.io_excel import read_input_xlsx
+        df, missing = read_input_xlsx(inp, meta=meta)
+    if missing:
+        raise ValueError(f"输入表缺少必填列: {', '.join(missing)}")
 
-    row_saver = _make_row_saver(folder_job_id, inp.name, resume=is_resume)
-    _update_batch_status(folder_job_id, "started")
+    from tools.pipeline.io_excel import ensure_output_columns
+    df = ensure_output_columns(df, meta)
 
-    # ═══ 自动分批循环：每批 eff_batch 行，全部跑完自动结束 ═══
+    n_total = len(df)
+    _update_batch_total(folder_job_id, inp.name, n_total)
+
+    # ── 当前批次处理 ──
     current_start = start_row
     total_processed = 0
-    final_has_more = False
-    last_error = None
 
     try:
-        while True:
-            # 每批开始前检查取消信号
-            signal = check_control()
-            if signal == "cancel":
-                raise _ControlExit("cancel", current_start)
-            if signal == "pause":
-                raise _ControlExit("pause", current_start)
-
-            batch_info.clear()
-            df = run_pipeline(
-                inp, out,
-                dry_run=dry_run, no_fetch=no_fetch,
-                limit=eff_batch, start_row=current_start,
-                append_output=(current_start > 0 or append_output),
-                progress_callback=rq_progress,
-                control_callback=check_control,
-                batch_info_out=batch_info,
-                row_save_callback=row_saver,
-            )
-
-            batch_end = batch_info.get("batch_end_exclusive", current_start + len(df))
-            batch_rows = batch_end - current_start
-            total_processed += batch_rows
-            final_has_more = bool(batch_info.get("has_more", False))
-
-            logger.info("RQ batch done: rows %d-%d, total_processed=%d, has_more=%s",
-                        current_start + 1, batch_end, total_processed, final_has_more)
-
-            if not final_has_more:
-                break
-
-            # 自动续跑下一批
-            current_start = batch_end
-            rq_progress({"phase": "batch_done", "current": total_processed,
-                         "total": batch_info.get("total_rows", total_processed),
-                         "message": f"已完成 {total_processed} 行，自动继续下一批..."})
-            time.sleep(0.5)  # 给 Redis 一点时间同步
-
-    except _ControlExit as e:
-        logger.warning("RQ job %s %s at row %d", folder_job_id, e.reason, e.row)
-        if e.reason == "cancel":
+        signal = check_control()
+        if signal == "cancel":
             _update_batch_status(folder_job_id, "cancelled")
-        else:
+            _ctrl_conn.delete(f"job_control:{folder_job_id}")
+            return {"rows": 0, "control": "cancel"}
+        if signal == "pause":
+            _save_progress(job_dir, n_total, current_start, eff_batch)
             _update_batch_status(folder_job_id, "paused")
-        _ctrl_conn.delete(f"job_control:{folder_job_id}")
-        # 保存进度以便续跑
+            return {"rows": 0, "control": "pause"}
+
+        batch_end = min(n_total, current_start + eff_batch)
+        n_batch = batch_end - current_start
+
+        # Phase 1: 预抓取本批网站（主进程，纯 httpx）
+        _report(_rq_job, {"phase": "prefetch", "current": 0, "total": 1,
+                          "message": "正在并行抓取网站..."})
+
+        if not no_fetch:
+            def _on_prefetch(done: int, total: int) -> None:
+                _report(_rq_job, {"phase": "prefetch", "current": done, "total": total,
+                                  "message": f"网站抓取 {done}/{total}"})
+
+            from tools.pipeline.paths import resolve_cache_dir, resolve_catalog_path, resolve_kb_path
+            _cache = resolve_cache_dir(None)
+            _cat = resolve_catalog_path(None)
+            _kb = resolve_kb_path(None)
+            try:
+                prefetch_cache = _prefetch_all_websites(
+                    df, current_start, batch_end,
+                    no_fetch=False, cache_dir=_cache,
+                    control_callback=check_control,
+                    progress_callback=_on_prefetch,
+                )
+            except _ControlExit as e:
+                _update_batch_status(folder_job_id, "cancelled")
+                _ctrl_conn.delete(f"job_control:{folder_job_id}")
+                return {"rows": max(0, e.row - current_start), "control": e.reason}
+        else:
+            prefetch_cache = {}
+
+        ok_count = sum(1 for _, errs in prefetch_cache.values() if not errs)
+        _report(_rq_job, {"phase": "prefetch", "current": 1, "total": 1,
+                          "message": f"网站抓取完成: {ok_count}/{len(prefetch_cache)}"})
+
+        # 准备子进程参数（JSON 序列化，避免 pickle 大数据）
+        df_slice = df.iloc[current_start:batch_end].copy()
+        df_slice_json = df_slice.to_json(orient="split", force_ascii=False)
+
+        # 预抓取缓存瘦身（去掉 html 字段减少传输量）
+        cache_slim: dict[str, dict] = {}
+        for ws, (pages, errs) in prefetch_cache.items():
+            slim_pages = [{k: v for k, v in p.items() if k != "html"} for p in pages]
+            cache_slim[ws] = {"pages": slim_pages, "errors": errs}
+
+        args = {
+            "df_slice_json": df_slice_json,
+            "prefetch_cache": cache_slim,
+            "meta_json": json.dumps(meta, ensure_ascii=False),
+            "data_root": str(root),
+            "batch_id": folder_job_id,
+            "start_row": current_start,
+            "catalog_path": str(_cat) if _cat.is_file() else "",
+            "kb_path": str(_kb) if _kb.is_file() else "",
+            "cache_dir": str(_cache),
+            "skip_playwright": False,
+        }
+        args_path = job_dir / "child_args.json"
+        args_path.write_text(json.dumps(args, ensure_ascii=False), encoding="utf-8")
+
+        # 释放父进程大数据（prefetch_cache 含所有网站文本，子进程启动后不再需要）
+        del prefetch_cache, cache_slim, df_slice, df_slice_json, args
+        _gc.collect()
+
+        # Phase 2: 子进程 AI 评估（subprocess.run，可靠性远胜 multiprocessing.spawn）
+        _report(_rq_job, {"phase": "eval", "current": 0, "total": n_batch,
+                          "message": f"AI 评估 0/{n_batch} 行"})
+
+        child_ok = False
+        for retry in range(2):
+            proc = subprocess.Popen(
+                [sys.executable, "-m", "src.agents.customer_eval.worker_child",
+                 str(args_path)],
+                cwd=str(Path(__file__).resolve().parent.parent.parent.parent),
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+            # 双线程读取子进程 stdout + stderr（Windows 管道满会导致子进程死锁）
+            _child_lines = []
+            _stderr_lines = []
+            def _read_stdout():
+                for _line in proc.stdout:
+                    _child_lines.append(_line)
+            def _read_stderr():
+                for _line in proc.stderr:
+                    _stderr_lines.append(_line)
+
+            import threading as _th
+            _reader = _th.Thread(target=_read_stdout, daemon=True)
+            _reader.start()
+            _stderr_reader = _th.Thread(target=_read_stderr, daemon=True)
+            _stderr_reader.start()
+
+            # 轮询等待，同时手动维持 RQ 心跳
+            deadline = time.monotonic() + 3600
+            _last_heartbeat = 0.0
+            _last_child_progress = time.monotonic()  # 看门狗：子进程最后产出进度的时间
+            _child_stuck_timeout = 600  # 10 分钟无进度 → 超时杀掉
+            while proc.poll() is None:
+                now = time.monotonic()
+                if now > deadline:
+                    proc.kill()
+                    break
+
+                # 每 30 秒手动刷新 RQ 心跳（Windows SimpleWorker 无心跳线程）
+                if now - _last_heartbeat > 30 and _rq_job:
+                    try:
+                        from datetime import datetime, timezone
+                        _rq_job.heartbeat(datetime.now(timezone.utc), 300)
+                        _last_heartbeat = now
+                    except Exception:
+                        pass
+
+                # 处理积攒的进度行
+                while _child_lines:
+                    line = _child_lines.pop(0)
+                    _last_child_progress = time.monotonic()  # 收到进度 → 重置看门狗
+                    try:
+                        data = json.loads(line.decode("utf-8", errors="replace"))
+                        if data.get("type") == "row":
+                            _done = data["done"]
+                            _tot = data["total"]
+                            _name = data.get("name", "")
+                            _report(_rq_job, {
+                                "phase": "eval",
+                                "current": _done,
+                                "total": _tot,
+                                "label": _name,
+                                "message": f"AI 评估 {_done}/{_tot} " + chr(183) + f" {_name}",
+                            })
+                    except Exception:
+                        pass
+
+                # 检查控制信号
+                signal = check_control()
+                if signal in ("cancel", "pause"):
+                    proc.kill()
+                    proc.wait()
+                    _reader.join(timeout=5)
+                    _stderr_reader.join(timeout=5)
+                    _update_batch_status(folder_job_id, "cancelled" if signal == "cancel" else "paused")
+                    _ctrl_conn.delete(f"job_control:{folder_job_id}")
+                    return {"rows": total_processed, "control": signal}
+
+                # 看门狗：子进程超过 10 分钟无任何进度 → 超时杀掉（防止 API 僵死导致死等）
+                if now - _last_child_progress > _child_stuck_timeout:
+                    logger.error("子进程 %d 分钟无进度，超时杀掉", _child_stuck_timeout // 60)
+                    proc.kill()
+                    break
+
+                time.sleep(0.5)
+            _reader.join(timeout=5)
+            _stderr_reader.join(timeout=5)
+            try:
+                stdout, stderr = proc.communicate(timeout=10)
+            except Exception:
+                stdout, stderr = b"", b""
+            if proc.returncode == 0:
+                child_ok = True
+                break
+            logger.warning("子进程退出码 %d，重试 %d/2", proc.returncode, retry + 1)
+            args["skip_playwright"] = True
+            args_path.write_text(json.dumps(args, ensure_ascii=False), encoding="utf-8")
+
+        if not child_ok:
+            stderr_lines = [_l.decode("utf-8", errors="replace") for _l in _stderr_lines]
+            stderr_tail = "".join(stderr_lines[-20:]) or "无 stderr 输出"
+            raise RuntimeError(f"子进程 2 次重试均失败。stderr:\n{stderr_tail}")
+
+        total_processed = n_batch
+
+        # 设置累进 rows_completed（本批结束后已处理到的行号）
+        _pg_db = get_db()
+        _pg_db.execute(
+            "UPDATE evaluation_batch SET rows_completed=? WHERE id=?",
+            (batch_end, folder_job_id),
+        )
+        _pg_db.commit()
+
+        # Phase 3: 写 output.xlsx（主进程）
+        _report(_rq_job, {"phase": "write", "current": n_batch, "total": n_batch,
+                          "message": "正在写入 Excel…"})
+
+        from tools.pipeline.io_excel import build_summary_export_df, write_result_xlsx
+        batch_df = df.iloc[current_start:batch_end].copy()
+        source_rows = list(range(current_start + 1, batch_end + 1))
+        summary_part = build_summary_export_df(
+            batch_df.reset_index(drop=True), meta, source_row_1based=source_rows,
+        )
+
+        if append_output and out.is_file():
+            try:
+                old = pd.read_excel(out, sheet_name="Summary", engine="openpyxl")
+                summary_df = pd.concat([old, summary_part], ignore_index=True, sort=False)
+            except Exception:
+                summary_df = summary_part
+        else:
+            summary_df = summary_part
+
+        write_result_xlsx(summary_df, out, detail_df=None, highlight_manual_review=True)
+        logger.info("output.xlsx written: %s, rows=%d", out, len(summary_df))
+
+        # 释放内存
+        del df_slice, prefetch_cache, cache_slim, summary_part, summary_df
+        _gc.collect()
+
+        _report(_rq_job, {"phase": "batch_done", "current": n_batch, "total": n_batch,
+                          "message": f"本批完成 {n_batch} 行"})
+
+        # 如果还有下一批 → 自动入队
+        has_more = batch_end < n_total
+        if has_more:
+            try:
+                from rq import Queue as _RQQueue
+                _q = _RQQueue("customer_eval:default", connection=_ctrl_conn)
+                next_job = _q.enqueue(
+                    "src.agents.customer_eval.tasks.run_eval_job",
+                    folder_job_id, str(root),
+                    dry_run=dry_run, no_fetch=no_fetch,
+                    batch_size=eff_batch, start_row=batch_end,
+                    append_output=True, input_ext=input_ext,
+                    job_timeout=14400,
+                )
+                # 保存进度（确保 progress.json 反映最新断点）
+                _save_progress(job_dir, n_total, batch_end, eff_batch)
+                # 存 next_job_id 到 Redis（rq_job_id.txt 马上会被覆盖，Redis key 不受影响）
+                _ctrl_conn.setex(
+                    f"job_next:{folder_job_id}", 86400,
+                    json.dumps({"next_job_id": next_job.id, "batch_rows": n_batch,
+                                "batch_end": batch_end, "total_rows": n_total}),
+                )
+                (job_dir / "rq_job_id.txt").write_text(next_job.id, encoding="utf-8")
+                _ctrl_conn.delete(f"job_control:{folder_job_id}")
+                logger.info("Auto-enqueue next batch: start=%d next_job=%s", batch_end, next_job.id)
+                return {"rows": total_processed, "total_rows": n_total,
+                        "has_more": True, "next_job_id": next_job.id,
+                        "batch_start_row": current_start, "batch_end_exclusive": batch_end}
+            except Exception:
+                logger.exception("批量入队下一批失败，保存断点")
+                _save_progress(job_dir, n_total, batch_end, eff_batch)
+                _update_batch_status(folder_job_id, "paused")
+                _ctrl_conn.delete(f"job_control:{folder_job_id}")
+                return {"rows": total_processed, "total_rows": n_total,
+                        "error": True, "paused": True, "batch_end_exclusive": batch_end}
+
+        # 全部完成
+        _update_batch_total(folder_job_id, inp.name, n_total)
+        _update_batch_status(folder_job_id, "finished")
         prog_path = job_dir / "progress.json"
-        n_total = batch_info.get("total_rows", total_processed)
-        if n_total > 0 and e.row < n_total:
-            json.dump({"total_rows": n_total, "next_start_row": e.row,
-                       "batch_size": eff_batch, "has_more": True},
-                      prog_path.open("w"), ensure_ascii=False, indent=2)
-        return {"rows": max(0, e.row - start_row), "output_path": str(out),
-                "control": e.reason, "batch_start_row": start_row,
-                "batch_end_exclusive": e.row}
+        if prog_path.is_file():
+            prog_path.unlink()
+        _ctrl_conn.delete(f"job_control:{folder_job_id}")
+        logger.info("RQ folder=%s ALL DONE: %s rows", folder_job_id, total_processed)
+        return {"rows": total_processed, "total_rows": n_total, "has_more": False}
+
     except Exception:
         logger.exception("RQ job %s pipeline error", folder_job_id)
-        _update_batch_status(folder_job_id, "failed")
+        # 保存断点进度（不覆盖已有 progress.json，防止内层已保存的正确值被覆盖）
+        _prog_path = job_dir / "progress.json"
+        if not _prog_path.is_file():
+            try:
+                _save_progress(job_dir, n_total, batch_end, eff_batch)
+            except Exception:
+                pass
+        _update_batch_status(folder_job_id, "paused")
         _ctrl_conn.delete(f"job_control:{folder_job_id}")
-        raise
+        return {"rows": total_processed, "total_rows": n_total, "error": True,
+                "paused": True, "batch_end_exclusive": batch_end}
 
-    # 全部完成
-    n_total = batch_info.get("total_rows", total_processed)
-    _update_batch_total(folder_job_id, inp.name, n_total)
-    prog_path = job_dir / "progress.json"
-    if prog_path.is_file():
-        prog_path.unlink()
-    _ctrl_conn.delete(f"job_control:{folder_job_id}")
 
-    logger.info("RQ folder=%s ALL DONE: %s rows", folder_job_id, total_processed)
-    return {"rows": total_processed, "output_path": str(out),
-            "has_more": False, "total_rows": n_total}
-
+# ═══════════════════════════════════════════════════════════════════════
+# URL 快速评估
+# ═══════════════════════════════════════════════════════════════════════
 
 def run_url_eval_job(
     folder_job_id: str,
@@ -227,13 +479,10 @@ def run_url_eval_job(
     no_fetch: bool = False,
 ) -> dict[str, Any]:
     """URL 快速评估：构造单行 DataFrame → 走标准 pipeline → 入库。"""
-    import pandas as pd
-
     root = Path(data_root)
     job_dir = root / "jobs" / folder_job_id
     out = job_dir / "output.xlsx"
 
-    # 构造单行输入
     row = {
         "company_name": company_name,
         "website": url,
@@ -245,13 +494,11 @@ def run_url_eval_job(
     }
     df_input = pd.DataFrame([row])
 
-    # 保存为 csv 供 pipeline 读取
     inp = job_dir / "input.csv"
     df_input.to_csv(inp, index=False)
 
     logger.info("URL eval: url=%s company=%s", url, company_name)
 
-    from rq import get_current_job
     from tools.pipeline.runner import run_pipeline
 
     batch_info: dict[str, Any] = {}
@@ -277,14 +524,16 @@ def run_url_eval_job(
     return {"rows": n, "output_path": str(out), "url": url}
 
 
+# ═══════════════════════════════════════════════════════════════════════
+# 数据库辅助函数
+# ═══════════════════════════════════════════════════════════════════════
+
 def _update_batch_total(batch_id: str, filename: str, total_rows: int) -> None:
-    from src.core.database import get_db
     db = get_db()
     db.execute(
         "INSERT INTO evaluation_batch (id, original_filename, total_rows, status) "
-        "VALUES (?, ?, ?, 'finished') ON CONFLICT(id) DO UPDATE SET "
-        "original_filename=excluded.original_filename, total_rows=excluded.total_rows, "
-        "status='finished', completed_at=datetime('now','localtime')",
+        "VALUES (?, ?, ?, 'started') ON CONFLICT(id) DO UPDATE SET "
+        "original_filename=excluded.original_filename, total_rows=excluded.total_rows",
         (batch_id, filename, total_rows),
     )
     db.commit()
@@ -292,7 +541,6 @@ def _update_batch_total(batch_id: str, filename: str, total_rows: int) -> None:
 
 
 def _update_batch_status(batch_id: str, status: str) -> None:
-    from src.core.database import get_db
     db = get_db()
     db.execute(
         "INSERT INTO evaluation_batch (id, original_filename, total_rows, status) "
@@ -307,118 +555,13 @@ def _update_batch_status(batch_id: str, status: str) -> None:
     db.commit()
 
 
-def _make_row_saver(batch_id: str, filename: str, resume: bool = False):
-    """返回一个 row_save_callback 函数：每行评估完成后立即入库。
-    若 resume=True，不删除已有行（断点续跑）。
-    """
-    from src.core.database import get_db
-    from pandas import isna as pd_isna
-
-    _init_done = False
-
-    def _ensure_init():
-        nonlocal _init_done
-        if _init_done:
-            return
-        _init_done = True
-        db = get_db()
-        if not resume:
-            db.execute("DELETE FROM customer WHERE batch_id=?", (batch_id,))
-        db.execute(
-            "INSERT INTO evaluation_batch (id, original_filename, total_rows, status) "
-            "VALUES (?, ?, 0, 'started') ON CONFLICT(id) DO UPDATE SET "
-            "original_filename=excluded.original_filename, status='started'",
-            (batch_id, filename),
-        )
-        db.commit()
-        db.execute("PRAGMA wal_checkpoint(FULL)")
-
-    col_map = {
-        "company_name": "company_name", "website": "website",
-        "country_region": "country_region", "contact_name": "contact_name",
-        "contact_email": "contact_email", "contact_phone": "contact_phone",
-        "contact_address": "contact_address", "target_products": "target_products",
-        "priority": "priority", "notes": "notes",
-        "product_fit_score": "product_fit_score", "product_fit_reasons": "product_fit_reasons",
-        "capability_score": "capability_score", "capability_signals": "capability_signals",
-        "reputation_facts": "reputation_facts", "reputation_concerns": "reputation_concerns",
-        "reputation_sources": "reputation_sources",
-        "reputation_safety_score": "reputation_safety_score",
-        "buyer_seller_role": "buyer_seller_role", "buyer_seller_reason": "buyer_seller_reason",
-        "deal_recommendation": "deal_recommendation", "next_action": "next_action",
-        "confidence": "confidence", "data_quality": "data_quality",
-        "fetched_pages": "fetched_pages", "errors": "errors",
-        "overall_score_computed": "overall_score_computed",
-        "manual_review_flag": "manual_review_flag", "eval_json": "eval_json",
-        "contact_emails_all": "contact_emails_all",
-        "social_profiles": "social_profiles",
-    }
-
-    _saved_count = 0
-
-    def save_row(row_idx: int, row_series, meta_info: dict):
-        nonlocal _saved_count
-        _ensure_init()
-        db = get_db()
-        row_values: list[Any] = [batch_id, int(row_idx)]
-        for df_col, db_col in col_map.items():
-            if df_col in row_series.index:
-                val = row_series[df_col]
-                if hasattr(val, "iloc") and hasattr(val, "shape"):
-                    try:
-                        if len(val) > 0:
-                            val = val.iloc[0]
-                        else:
-                            val = None
-                    except Exception:
-                        val = None
-                if hasattr(val, "item"):
-                    try:
-                        val = val.item()
-                    except (ValueError, TypeError):
-                        val = None
-                if pd_isna(val):
-                    val = None
-                elif isinstance(val, str):
-                    val = val.strip()
-            else:
-                val = None
-            row_values.append(val)
-
-        db_cols = ["batch_id", "row_index"] + list(col_map.values())
-        placeholders = ", ".join("?" for _ in db_cols)
-        sql = f"INSERT OR REPLACE INTO customer ({', '.join(db_cols)}) VALUES ({placeholders})"
-        db.execute(sql, row_values)
-        db.commit()
-
-        # 每 10 行更新一次断点进度
-        _saved_count += 1
-        if _saved_count % 10 == 0:
-            db.execute(
-                "UPDATE evaluation_batch SET rows_completed=? WHERE id=?",
-                (_saved_count, batch_id),
-            )
-            db.commit()
-            db.execute("PRAGMA wal_checkpoint(FULL)")
-
-    return save_row
-
-
 def _save_to_database(batch_id: str, filename: str, df) -> None:
-    from src.core.database import get_db
+    """Save evaluation results to SQLite customer table（批量模式，用于 URL eval）。"""
     from pandas import isna as pd_isna
     db = get_db()
 
-    # Upsert batch record
-    db.execute(
-        "INSERT INTO evaluation_batch (id, original_filename, total_rows, status) "
-        "VALUES (?, ?, ?, 'finished') ON CONFLICT(id) DO UPDATE SET "
-        "original_filename=excluded.original_filename, total_rows=excluded.total_rows, "
-        "status='finished', completed_at=datetime('now','localtime')",
-        (batch_id, filename, len(df)),
-    )
+    db.execute("DELETE FROM customer WHERE batch_id=?", (batch_id,))
 
-    # Map DataFrame columns to DB columns
     col_map = {
         "company_name": "company_name", "website": "website",
         "country_region": "country_region", "contact_name": "contact_name",
@@ -437,64 +580,26 @@ def _save_to_database(batch_id: str, filename: str, df) -> None:
         "overall_score_computed": "overall_score_computed",
         "manual_review_flag": "manual_review_flag", "eval_json": "eval_json",
         "contact_emails_all": "contact_emails_all",
-        "social_profiles": "social_profiles",
+        "extracted_social": "extracted_social",
+        "search_fallback_used": "search_fallback_used",
     }
 
-    # Transaction: atomic delete + insert for this batch
-    # Use SAVEPOINT to avoid "cannot start a transaction within a transaction"
-    _saved = False
-    try:
-        db.execute("SAVEPOINT _save_batch")
-        _saved = True
-    except Exception:
-        pass
-    db.execute("DELETE FROM customer WHERE batch_id=?", (batch_id,))
-
-    # Build fixed column order for executemany batch INSERT
-    db_cols = ["batch_id", "row_index"] + list(col_map.values())
-    columns_str = ", ".join(db_cols)
-    placeholders_str = ", ".join("?" for _ in db_cols)
-    sql = f"INSERT INTO customer ({columns_str}) VALUES ({placeholders_str})"
-
-    values_list: list[tuple[Any, ...]] = []
-    for idx, row in df.iterrows():
-        row_values: list[Any] = [batch_id, int(idx)]
+    for i, (_, row) in enumerate(df.iterrows()):
+        vals = [batch_id, i + 1]
         for df_col, db_col in col_map.items():
-            if df_col in df.columns:
-                val = row[df_col]
-                # Guard against pandas Series (duplicate column names)
-                if hasattr(val, "iloc") and hasattr(val, "shape"):
-                    try:
-                        if len(val) > 0:
-                            val = val.iloc[0]
-                        else:
-                            val = None
-                    except Exception:
-                        val = None
-                if hasattr(val, "item"):
-                    try:
-                        val = val.item()
-                    except ValueError:
-                        val = None
-                if pd_isna(val):
-                    val = None
-                elif isinstance(val, str):
-                    val = val.strip()
-                    # XSS prevention: only allow http/https URLs in website field
-                    if db_col == "website" and val and not (val.lower().startswith("http://") or val.lower().startswith("https://")):
-                        val = "https://" + val
-            else:
-                val = None
-            row_values.append(val)
-        values_list.append(tuple(row_values))
+            v = row.get(df_col)
+            try:
+                if pd_isna(v):
+                    v = None
+            except (TypeError, ValueError):
+                pass
+            if isinstance(v, str):
+                v = v.strip()
+            vals.append(v)
 
-    db.executemany(sql, values_list)
-    if _saved:
-        try:
-            db.execute("RELEASE _save_batch")
-        except Exception as e:
-            logger.warning("RELEASE SAVEPOINT _save_batch 失败 (可忽略): %s", e)
+        placeholders = ",".join("?" for _ in range(len(vals)))
+        sql = f"INSERT INTO customer (batch_id, row_index, {','.join(col_map.values())}) VALUES ({placeholders})"
+        db.execute(sql, vals)
+
     db.commit()
-    # 强制 WAL checkpoint，确保数据写入主数据库文件
-    db.execute("PRAGMA wal_checkpoint(FULL)")
-    logger.info("Saved %d customers to database for batch %s", len(df), batch_id)
+    _update_batch_status(batch_id, "finished")
