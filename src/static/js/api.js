@@ -1,31 +1,12 @@
-// api.js — Shared fetch wrapper with auth handling
-const AUTH_KEY = 'platform_basic_auth';
-
-function getCreds() {
-  try {
-    return JSON.parse(sessionStorage.getItem(AUTH_KEY));
-  } catch { return null; }
-}
-
+// api.js — Shared fetch wrapper (Session auth via Cookie)
 export async function apiFetch(url, opts = {}) {
-  const creds = getCreds();
-  const headers = { ...opts.headers };
-  if (creds) {
-    headers['Authorization'] = 'Basic ' + btoa(
-      decodeURIComponent(encodeURIComponent(creds.user + ':' + creds.pass))
-    );
-  }
-  const r = await fetch(url, { ...opts, headers });
+  const r = await fetch(url, { ...opts, credentials: 'same-origin' });
   if (r.status === 401) {
-    const u = prompt('内部站点 — 用户名');
-    if (u === null) throw new Error('cancel');
-    const p = prompt('密码');
-    if (p === null) throw new Error('cancel');
-    sessionStorage.setItem(AUTH_KEY, JSON.stringify({ user: u, pass: p }));
-    headers['Authorization'] = 'Basic ' + btoa(
-      decodeURIComponent(encodeURIComponent(u + ':' + p))
-    );
-    return fetch(url, { ...opts, headers });
+    window.location.href = '/login?redirect=' + encodeURIComponent(window.location.pathname);
+    throw new Error('auth_required');
+  }
+  if (r.status === 403) {
+    throw new Error('forbidden');
   }
   return r;
 }
@@ -40,7 +21,7 @@ export async function apiPost(url, body, isJson = false) {
     opts.headers = { 'Content-Type': 'application/json' };
     opts.body = JSON.stringify(body);
   } else {
-    opts.body = body; // FormData
+    opts.body = body;
   }
   return apiFetch(url, opts);
 }
