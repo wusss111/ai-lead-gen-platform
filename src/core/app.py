@@ -98,6 +98,12 @@ def create_app() -> FastAPI:
         request.state.current_user = user
         if not user and not _public and not path.startswith("/api/"):
             return RedirectResponse(url=f"/login?redirect={path}", status_code=303)
+        # 销售访问 admin-only 页面：返回友好提示而不是 JSON
+        if user and user.get("role") != "admin" and path.startswith("/customer-eval") and not path.startswith("/api/"):
+            return HTMLResponse(
+                "<h3 style='margin:3rem auto;text-align:center;color:var(--text-secondary)'>"
+                "仅管理员可访问此功能<br><a href='/'>返回首页</a></h3>",
+                status_code=403)
         response = await call_next(request)
         return response
 
