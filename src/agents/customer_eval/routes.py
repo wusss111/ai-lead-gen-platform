@@ -200,8 +200,8 @@ def continue_job(
 
 @router.get("/api/batches")
 def list_eval_batches(
+    user: Annotated[dict, Depends(require_admin)],
     config: Annotated[PlatformConfig, Depends(get_config)],
-    _: Annotated[None, Depends(require_auth)],
 ) -> JSONResponse:
     from src.core.database import get_db, dicts_from_rows
     db = get_db()
@@ -254,7 +254,7 @@ def get_job_status(
     from src.core.database import get_db
     db = get_db()
     batch_row = db.execute(
-        "SELECT total_rows FROM evaluation_batch WHERE id=?", (job_id,)
+        "SELECT total_rows, rows_completed FROM evaluation_batch WHERE id=?", (job_id,)
     ).fetchone()
     if batch_row and batch_row["total_rows"]:
         body["total_rows"] = batch_row["total_rows"]
@@ -318,7 +318,7 @@ def pause_job(
 @router.post("/api/jobs/{job_id}/resume")
 def resume_job(
     job_id: str,
-    _: Annotated[None, Depends(require_auth)],
+    _admin: Annotated[None, Depends(require_admin)],
     config: Annotated[PlatformConfig, Depends(get_config)],
 ) -> JSONResponse:
     """恢复中断的评估任务（从断点继续）。"""
