@@ -9,11 +9,11 @@ async function loadTable() {
   const tbody = document.getElementById('tableBody');
   try {
     const r = await apiFetch('/crm/api/salespersons');
-    if (!r.ok) { tbody.innerHTML = '<tr><td colspan="7" class="empty-state">加载失败</td></tr>'; return; }
+    if (!r.ok) { tbody.innerHTML = '<tr><td colspan="8" class="empty-state">加载失败</td></tr>'; return; }
     const list = await r.json();
     _salespersonList = list;
     if (!list.length) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">暂无销售人员，点击"添加销售"开始</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">暂无销售人员，点击"添加销售"开始</td></tr>';
       return;
     }
     tbody.innerHTML = list.map(s => `
@@ -21,6 +21,7 @@ async function loadTable() {
         <td><strong>${esc(s.name)}</strong></td>
         <td>${esc(s.email) || '-'}</td>
         <td>${esc(s.phone) || '-'}</td>
+        <td>${s.role === 'admin' ? '<span class="badge" style="background:#238636;color:#fff">管理员</span>' : '<span class="badge" style="background:#30363d;color:var(--text-secondary)">销售</span>'}</td>
         <td>${s.smtp_username ? esc(s.smtp_username) : '<span style="color:var(--text-muted)">未绑定</span>'}</td>
         <td>${s.customer_count || 0}</td>
         <td>${s.is_active ? '<span class="badge badge-green">在职</span>' : '<span class="badge badge-gray">停用</span>'}</td>
@@ -32,7 +33,7 @@ async function loadTable() {
       </tr>
     `).join('');
   } catch (e) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty-state">加载异常</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-state">加载异常</td></tr>';
   }
 }
 
@@ -55,6 +56,8 @@ window.showAddModal = function () {
   document.getElementById('spName').value = '';
   document.getElementById('spEmail').value = '';
   document.getElementById('spPhone').value = '';
+  document.getElementById('spPassword').value = '';
+  document.getElementById('spRole').value = 'salesperson';
   document.getElementById('spSmtpHost').value = '';
   document.getElementById('spSmtpPort').value = '587';
   document.getElementById('spSmtpUser').value = '';
@@ -73,6 +76,8 @@ window.editSalesperson = function (id) {
   document.getElementById('spName').value = sp.name;
   document.getElementById('spEmail').value = sp.email || '';
   document.getElementById('spPhone').value = sp.phone || '';
+  document.getElementById('spPassword').value = '';
+  document.getElementById('spRole').value = sp.role || 'salesperson';
   document.getElementById('spSmtpHost').value = sp.smtp_host || '';
   document.getElementById('spSmtpPort').value = sp.smtp_port || 587;
   document.getElementById('spSmtpUser').value = sp.smtp_username || '';
@@ -96,6 +101,9 @@ window.saveSalesperson = async function () {
   fd.append('name', name);
   fd.append('email', document.getElementById('spEmail').value.trim());
   fd.append('phone', document.getElementById('spPhone').value.trim());
+  const pw = document.getElementById('spPassword').value;
+  if (pw) fd.append('password', pw);
+  fd.append('role', document.getElementById('spRole').value);
   fd.append('smtp_host', document.getElementById('spSmtpHost').value.trim());
   fd.append('smtp_port', document.getElementById('spSmtpPort').value);
   fd.append('smtp_username', document.getElementById('spSmtpUser').value.trim());

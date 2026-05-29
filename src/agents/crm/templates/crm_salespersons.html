@@ -28,6 +28,7 @@
           <th>姓名</th>
           <th>邮箱</th>
           <th>电话</th>
+          <th>角色</th>
           <th>绑定邮箱</th>
           <th style="text-align:center">客户数</th>
           <th style="text-align:center">状态</th>
@@ -35,7 +36,7 @@
         </tr>
       </thead>
       <tbody id="tableBody">
-        <tr><td colspan="7" class="empty-cell"><p>加载中...</p></td></tr>
+        <tr><td colspan="8" class="empty-cell"><p>加载中...</p></td></tr>
       </tbody>
     </table>
   </div>
@@ -65,6 +66,19 @@
         电话
         <input type="text" id="spPhone" style="width:100%; margin-top:0.25rem; padding:0.55rem 0.7rem; border-radius:var(--radius-sm);
           border:var(--border-input); background:var(--bg-input); color:var(--text-primary); font-family:var(--font-body); font-size:0.9rem" />
+      </label>
+      <label style="display:block; margin-bottom:0.8rem; font-size:0.85rem; color:var(--text-secondary)">
+        登录密码
+        <input type="password" id="spPassword" placeholder="留空则不修改" style="width:100%; margin-top:0.25rem; padding:0.55rem 0.7rem; border-radius:var(--radius-sm);
+          border:var(--border-input); background:var(--bg-input); color:var(--text-primary); font-family:var(--font-body); font-size:0.9rem" />
+      </label>
+      <label style="display:block; margin-bottom:0.8rem; font-size:0.85rem; color:var(--text-secondary)">
+        角色
+        <select id="spRole" style="width:100%; margin-top:0.25rem; padding:0.55rem 0.7rem; border-radius:var(--radius-sm);
+          border:var(--border-input); background:var(--bg-input); color:var(--text-primary); font-family:var(--font-body); font-size:0.9rem">
+          <option value="salesperson">销售</option>
+          <option value="admin">管理员</option>
+        </select>
       </label>
       <details style="margin-bottom:0.8rem;border:1px solid var(--border-input);border-radius:var(--radius-sm);padding:0.6rem 0.8rem">
         <summary style="font-size:0.85rem;cursor:pointer;color:var(--text-secondary)">邮箱绑定（可选）</summary>

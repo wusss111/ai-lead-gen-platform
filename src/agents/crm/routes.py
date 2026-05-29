@@ -379,6 +379,8 @@ def create_salesperson(
     name: str = Form(...),
     email: str = Form(""),
     phone: str = Form(""),
+    password: str = Form(""),
+    role: str = Form("salesperson"),
     smtp_host: str = Form(""),
     smtp_port: str = Form("587"),
     smtp_username: str = Form(""),
@@ -390,11 +392,16 @@ def create_salesperson(
     if not name.strip():
         raise HTTPException(400, "姓名不能为空")
     db = get_db()
+    import bcrypt as _bcrypt
+    pw_hash = None
+    if password.strip():
+        pw_hash = _bcrypt.hashpw(password.strip().encode("utf-8"), _bcrypt.gensalt()).decode("utf-8")
     cur = db.execute(
-        "INSERT INTO salesperson (name, email, phone, smtp_host, smtp_port, "
+        "INSERT INTO salesperson (name, email, phone, password_hash, role, smtp_host, smtp_port, "
         "smtp_username, smtp_password, imap_host, imap_port, wework_userid) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (name.strip(), email.strip(), phone.strip(),
+         pw_hash, role.strip(),
          smtp_host.strip(), int(smtp_port) if smtp_port.strip() else 587,
          smtp_username.strip(), smtp_password.strip(),
          imap_host.strip(), int(imap_port) if imap_port.strip() else 993,
@@ -412,6 +419,8 @@ def update_salesperson(
     name: str = Form(None),
     email: str = Form(None),
     phone: str = Form(None),
+    password: str = Form(None),
+    role: str = Form(None),
     is_active: str = Form(None),
     smtp_host: str = Form(None),
     smtp_port: str = Form(None),
@@ -443,6 +452,14 @@ def update_salesperson(
     if is_active is not None and is_active.strip():
         sets.append("is_active=?")
         params.append(1 if is_active.strip().lower() in ("1", "true") else 0)
+    if password is not None and password.strip():
+        import bcrypt as _bcrypt
+        pw_hash = _bcrypt.hashpw(password.strip().encode("utf-8"), _bcrypt.gensalt()).decode("utf-8")
+        sets.append("password_hash=?")
+        params.append(pw_hash)
+    if role is not None and role.strip():
+        sets.append("role=?")
+        params.append(role.strip())
     if not sets:
         raise HTTPException(400, "没有需要更新的字段")
     params.append(sp_id)
