@@ -11,7 +11,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from src.core.auth import require_auth
+from src.core.auth import require_auth, apply_sales_filter
 from src.core.config import PlatformConfig, get_config
 from src.core.redis_utils import get_queue, get_rq_job_info
 from src.core.database import get_db, dicts_from_rows, dict_from_row
@@ -40,7 +40,7 @@ def mail_page(request: Request):
 
 @router.get("/api/customers/emailable")
 def get_emailable_customers(
-    _: Annotated[None, Depends(require_auth)],
+    user: Annotated[dict, Depends(require_auth)],
     search: str = "",
     deal_recommendation: str = "",
     email_status: str = "",
@@ -77,6 +77,7 @@ def get_emailable_customers(
         else:
             where.append("c.assigned_salesperson_id = ?")
             params.append(int(salesperson_id))
+    apply_sales_filter(where, params, user)
     where_clause = " AND ".join(where)
     rows = db.execute(
         f"SELECT c.id, c.company_name, c.contact_name, c.contact_email, c.country_region, "
@@ -133,20 +134,25 @@ def generate_emails(
 
 @router.get("/api/emails/saved")
 def get_saved_emails(
-    _: Annotated[None, Depends(require_auth)],
+    user: Annotated[dict, Depends(require_auth)],
 ) -> JSONResponse:
     """Return customers who already have generated/draft/confirmed/sent/failed emails."""
     db = get_db()
+    where_saved = ["c.email_status IN ('draft','confirmed','generated','sent','failed')"]
+    params_saved: list = []
+    apply_sales_filter(where_saved, params_saved, user)
+
     rows = db.execute(
-        "SELECT c.id, c.company_name, c.contact_name, c.contact_email, c.country_region, "
-        "c.overall_score_computed, c.deal_recommendation, "
-        "c.email_status, c.email_subject, c.email_body, "
-        "c.email_sent_at, c.tracking_last_opened_at, c.assigned_salesperson_id, "
-        "COALESCE(s.name, '') as salesperson_name "
-        "FROM customer c "
-        "LEFT JOIN salesperson s ON c.assigned_salesperson_id = s.id "
-        "WHERE c.email_status IN ('draft','confirmed','generated','sent','failed') "
-        "ORDER BY c.email_status, c.overall_score_computed DESC"
+        f"SELECT c.id, c.company_name, c.contact_name, c.contact_email, c.country_region, "
+        f"c.overall_score_computed, c.deal_recommendation, "
+        f"c.email_status, c.email_subject, c.email_body, "
+        f"c.email_sent_at, c.tracking_last_opened_at, c.assigned_salesperson_id, "
+        f"COALESCE(s.name, '') as salesperson_name "
+        f"FROM customer c "
+        f"LEFT JOIN salesperson s ON c.assigned_salesperson_id = s.id "
+        f"WHERE {' AND '.join(where_saved)} "
+        f"ORDER BY c.email_status, c.overall_score_computed DESC",
+        params_saved,
     ).fetchall()
     return JSONResponse(dicts_from_rows(rows))
 
