@@ -90,7 +90,7 @@ def create_app() -> FastAPI:
         """Attach current_user to request.state for template rendering.
         Redirect unauthenticated page visits to /login (API calls get 401 JSON)."""
         path = request.url.path
-        _public = path in ("/login", "/health", "/") or path.startswith("/track/") or path.startswith("/static/")
+        _public = path in ("/login", "/health") or path.startswith("/track/") or path.startswith("/static/")
         try:
             user = _auth_get_user(request, config)
         except Exception:
@@ -113,13 +113,10 @@ def create_app() -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def home(request: Request):
-        t = jinja_env.get_template("home.html")
-        return HTMLResponse(t.render({
-            "request": request,
-            "nav_agents": nav_agents,
-            "active_agent": None,
-            "agents": agents,
-        }))
+        user = request.state.current_user
+        if user:
+            return RedirectResponse(url="/crm/", status_code=303)
+        return RedirectResponse(url="/login", status_code=303)
 
     # ---- Email tracking pixel endpoint (public, no auth) ----
     @app.get("/track/open/{tracking_uuid}")

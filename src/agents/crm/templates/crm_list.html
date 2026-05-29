@@ -16,7 +16,7 @@
     </div>
     <div class="crm-header-right">
       <button class="btn-accent" onclick="showSmartSearch()" title="AI 智能搜索">&#128269; 智能搜索</button>
-      <a href="/crm/salespersons" class="btn-outline">&#128101; 销售管理</a>
+      <a href="/crm/salespersons" class="btn-outline" style="{% if not request.state.current_user or request.state.current_user.role != 'admin' %}display:none{% endif %}">&#128101; 销售管理</a>
     </div>
   </div>
 
