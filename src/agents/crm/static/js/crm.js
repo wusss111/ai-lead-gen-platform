@@ -588,6 +588,18 @@ document.addEventListener('DOMContentLoaded', async function () {
   loadStats();
 
   console.log('CRM: Init complete. Cache:', salespersonCache.length, 'salespersons,', currentCustomers.length, 'customers on page');
+
+  // 销售角色：隐藏销售筛选和控制元素
+  if (window.__currentUser && window.__currentUser.role === 'salesperson') {
+    var spFilter = document.getElementById('filterSalesperson');
+    if (spFilter) spFilter.style.display = 'none';
+    // Hide all quick-assign selects in table
+    var hideQuickAssign = function() {
+      document.querySelectorAll('.sp-inline').forEach(function(el) { el.style.display = 'none'; });
+    };
+    hideQuickAssign();
+    document.addEventListener('DOMNodeInserted', hideQuickAssign);
+  }
 });
 
 async function loadCustomersByBatch(batchId) {
