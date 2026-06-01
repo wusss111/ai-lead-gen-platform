@@ -23,3 +23,9 @@ deploy/ssl/*
 
 # 开发过程文档
 docs/superpowers/
+
+# PyInstaller 构建产物
+dist/
+build/
+packaging/release/
+*.spec.bak

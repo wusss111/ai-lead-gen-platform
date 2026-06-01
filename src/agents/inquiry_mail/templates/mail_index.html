@@ -34,9 +34,10 @@ localStorage.removeItem('platform_active_jobs');
     <div class="filter-row">
       <input type="search" id="searchInput" placeholder="搜索公司名或邮箱..." oninput="debounceLoad()" />
       <select id="filterRec" onchange="window.loadEmailable()">
-        <option value="">全部推荐</option>
+        <option value="">全部意向</option>
         <option value="high_intent">高意向</option>
         <option value="watch">观察</option>
+        <option value="no">不建议</option>
       </select>
       <select id="filterMailStatus" onchange="window.loadEmailable()">
         <option value="">全部状态</option>

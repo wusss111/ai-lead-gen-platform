@@ -4,7 +4,7 @@
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent  # packaging/ → repo root
+ROOT = Path(SPECPATH).resolve().parent  # packaging/ → repo root
 
 # ── Hidden imports ────────────────────────────────────────────────
 # Agent auto-discovery uses importlib → PyInstaller cannot trace.
@@ -127,8 +127,8 @@ a = Analysis(
     hookspath=[str(ROOT / "packaging" / "hooks")],
     runtime_hooks=[],
     excludes=[
-        "tkinter.test", "unittest", "pytest", "setuptools",
-        "distutils", "pip", "wheel", "test", "tests",
+        "tkinter.test", "unittest", "pytest",
+        "test", "tests",
         "Cython", "matplotlib", "scipy", "IPython",
     ],
     win_no_prefer_redirects=False,

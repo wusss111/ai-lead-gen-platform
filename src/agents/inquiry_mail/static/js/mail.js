@@ -23,7 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
   checkSmtp();
   if (window.__currentUser && window.__currentUser.role === 'salesperson') {
     const spFilter = document.getElementById('filterSalesperson');
-    if (spFilter) spFilter.parentElement.style.display = 'none';
+    if (spFilter) spFilter.style.display = 'none';
   }
   loadSalespersons();
   loadEmailable();

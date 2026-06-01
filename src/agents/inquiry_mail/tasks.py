@@ -344,8 +344,30 @@ def send_emails_job(
     _TOKEN_DIR = _repo_root / "var" / "gmail_tokens"
     _gmail_secret = _repo_root / "var" / "gmail_client_secret.json"
 
+    # --- Sending channel selection ---
+    # Priority: Gmail API (if valid token) → SMTP fallback → error
+    _use_gmail = False
     if _gmail_token.is_file() or _TOKEN_DIR.is_dir():
-        logger.info("Using Gmail API for %d emails (delay=%ds)", len(to_send), send_delay)
+        from tools.gmail_sender import _get_creds, get_all_salesperson_token_ids
+        _gmail_ok = False
+        _valid_sids = get_all_salesperson_token_ids()
+        if _valid_sids:
+            # Check at least one token is actually usable (not expired or refreshable)
+            for _sid in list(_valid_sids)[:3]:
+                try:
+                    _creds = _get_creds(_sid)
+                    if _creds and _creds.valid:
+                        _gmail_ok = True
+                        break
+                except Exception:
+                    pass
+        if _gmail_ok:
+            _use_gmail = True
+            logger.info("Using Gmail API for %d emails (delay=%ds)", len(to_send), send_delay)
+        else:
+            logger.warning("Gmail tokens exist but all expired/can't refresh. Will try SMTP fallback.")
+
+    if _use_gmail:
         from tools.gmail_sender import send_emails_batch as send_batch
 
         # Build sp_id lookup dict: customer_id → salesperson_id
@@ -364,20 +386,18 @@ def send_emails_job(
 
         results = send_batch(to_send, delay_seconds=send_delay, from_email=from_email,
                              progress_callback=rq_progress, get_salesperson_id=_get_sp_id)
-    elif _gmail_secret.is_file():
-        logger.warning(
-            "Gmail client secret exists but OAuth token not found. "
-            "Run: python tools/setup_gmail_oauth.py  first, then retry. "
-            "Falling back to SMTP."
-        )
-        from tools.email_sender import send_emails_batch as send_batch
-        results = send_batch(_global_cfg, to_send, delay_seconds=send_delay,
-                             progress_callback=rq_progress, config_factory=_get_smtp_config)
-    else:
+    elif _global_cfg.host and _global_cfg.from_email:
         logger.info("Using SMTP for %d emails (delay=%ds)", len(to_send), send_delay)
         from tools.email_sender import send_emails_batch as send_batch
         results = send_batch(_global_cfg, to_send, delay_seconds=send_delay,
                              progress_callback=rq_progress, config_factory=_get_smtp_config)
+    else:
+        logger.error("No sending channel: Gmail tokens expired, SMTP not configured")
+        # Mark all as failed without attempting
+        results = []
+        for item in to_send:
+            results.append({**item, "send_success": False,
+                           "send_error": "无可用发送通道：Gmail 授权已过期且 SMTP 未配置，请在 .env 中配置 SMTP 或重新授权 Gmail"})
 
     # Update emails.json and DB with send results
     email_map = {e.get("customer_id"): i for i, e in enumerate(emails)}

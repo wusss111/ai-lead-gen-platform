@@ -23,7 +23,14 @@ from googleapiclient.errors import HttpError
 logger = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+def _detect_repo_root() -> Path:
+    import sys as _sys
+    if getattr(_sys, "frozen", False):
+        return Path(_sys._MEIPASS)
+    return Path(__file__).resolve().parent.parent
+
+_REPO_ROOT = _detect_repo_root()
 _TOKEN_DIR = _REPO_ROOT / "var" / "gmail_tokens"
 _CLIENT_SECRET_PATH = _REPO_ROOT / "var" / "gmail_client_secret.json"
 # Legacy: single global token
@@ -52,9 +59,15 @@ def _get_creds(salesperson_id: int | None = None) -> Credentials:
         )
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            token_path.parent.mkdir(parents=True, exist_ok=True)
-            token_path.write_text(creds.to_json(), encoding="utf-8")
+            try:
+                creds.refresh(Request())
+                token_path.parent.mkdir(parents=True, exist_ok=True)
+                token_path.write_text(creds.to_json(), encoding="utf-8")
+                logger.info("Gmail token refreshed successfully for sp=%s", salesperson_id)
+            except Exception as e:
+                logger.error("Gmail token refresh failed for sp=%s: %s", salesperson_id, e)
+                # Return expired creds so caller can give clear error
+                return creds
         else:
             # Can't auto-renew without interactive auth
             return creds  # Will fail on use, caller must handle
