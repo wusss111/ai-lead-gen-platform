@@ -1,8 +1,13 @@
-"""Customer Platform Launcher — tkinter GUI managing Redis + Workers + Web."""
+"""Customer Platform Launcher — tkinter GUI managing Redis + Workers + Web.
+
+In frozen mode (PyInstaller), Python services run in-process via threads
+because sys.executable is the bundled exe, not a Python interpreter.
+"""
 
 from __future__ import annotations
 
 import atexit
+import logging
 import os
 import signal
 import subprocess
@@ -16,13 +21,15 @@ from pathlib import Path
 # Path resolution (frozen-aware)
 # ═══════════════════════════════════════════════════════════════════
 
-if getattr(sys, "frozen", False):
+FROZEN = getattr(sys, "frozen", False)
+
+if FROZEN:
     APP_DIR = Path(sys.executable).resolve().parent
     MEIPASS = Path(sys._MEIPASS)
     REDIS_EXE = APP_DIR / "redis" / "redis-server.exe"
     DATA_DIR = Path(os.environ.get("PLATFORM_DATA_DIR", APP_DIR / "data"))
 else:
-    APP_DIR = Path(__file__).resolve().parents[1]   # packaging/ → repo root
+    APP_DIR = Path(__file__).resolve().parents[1]
     MEIPASS = APP_DIR
     REDIS_EXE = APP_DIR / "var" / "redis" / "redis-server.exe"
     DATA_DIR = Path(os.environ.get("PLATFORM_DATA_DIR", APP_DIR / "var" / "platform"))
@@ -31,43 +38,57 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0").strip()
 WEB_PORT = os.environ.get("WEB_PORT", "8000").strip()
 
-# Ensure MEIPASS is on sys.path so importlib-based agent discovery works
 if str(MEIPASS) not in sys.path:
     sys.path.insert(0, str(MEIPASS))
 
 # ═══════════════════════════════════════════════════════════════════
-# Process management
+# Process / thread management
 # ═══════════════════════════════════════════════════════════════════
 
-_processes: list[subprocess.Popen] = []
+_redis_proc: subprocess.Popen | None = None
+_worker_threads: list[threading.Thread] = []
+_web_thread: threading.Thread | None = None
 _shutting_down = False
+_services_ok = 0  # bitmask: 1=redis, 2=workers, 4=web
 
 
 def _kill_all():
     global _shutting_down
     _shutting_down = True
-    for p in reversed(_processes):
+    # Stop Redis subprocess
+    if _redis_proc is not None:
         try:
-            p.terminate()
+            _redis_proc.terminate()
+            _redis_proc.wait(timeout=2)
         except Exception:
-            pass
-    time.sleep(0.3)
-    for p in reversed(_processes):
-        try:
-            p.kill()
-        except Exception:
-            pass
+            try:
+                _redis_proc.kill()
+            except Exception:
+                pass
 
 
 atexit.register(_kill_all)
+
 
 # ═══════════════════════════════════════════════════════════════════
 # Service starters
 # ═══════════════════════════════════════════════════════════════════
 
 
-def start_redis(log_cb):
-    """Start Redis server as a subprocess."""
+def _setup_env() -> dict:
+    """Set up environment variables for platform services."""
+    env = os.environ.copy()
+    if not os.environ.get("PLATFORM_DATA_DIR"):
+        env["PLATFORM_DATA_DIR"] = str(DATA_DIR)
+    if not os.environ.get("REDIS_URL"):
+        env["REDIS_URL"] = REDIS_URL
+    env["PYTHONPATH"] = str(MEIPASS)
+    return env
+
+
+def start_redis(log_cb) -> bool:
+    """Start Redis server as a subprocess (separate exe, always needed)."""
+    global _redis_proc
     log_cb("Starting Redis server...")
     redis_dir = REDIS_EXE.parent
     if not REDIS_EXE.is_file():
@@ -77,10 +98,10 @@ def start_redis(log_cb):
     conf = redis_dir / "redis.runtime.conf"
     conf.write_text(
         "bind 127.0.0.1\r\nport 6379\r\nloglevel warning\r\n"
-        "save \"\"\r\nappendonly no\r\ndir ./\r\ndbfilename dump.rdb\r\n"
+        'save ""\r\nappendonly no\r\ndir ./\r\ndbfilename dump.rdb\r\n'
     )
     try:
-        proc = subprocess.Popen(
+        _redis_proc = subprocess.Popen(
             [str(REDIS_EXE), str(conf)],
             cwd=str(DATA_DIR),
             stdout=subprocess.DEVNULL,
@@ -90,75 +111,82 @@ def start_redis(log_cb):
         log_cb(f"ERROR: Redis failed to start: {e}")
         return False
 
-    _processes.append(proc)
     time.sleep(1.5)
-    if proc.poll() is not None:
-        log_cb(f"ERROR: Redis exited immediately (code {proc.returncode})")
+    if _redis_proc.poll() is not None:
+        log_cb(f"ERROR: Redis exited immediately (code {_redis_proc.returncode})")
         return False
     log_cb("Redis OK (127.0.0.1:6379)")
     return True
 
 
-def start_worker(queue_name, log_cb):
-    """Start one RQ worker (SimpleWorker required on Windows)."""
-    log_cb(f"Starting RQ Worker: {queue_name} ...")
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(MEIPASS)
+def _run_worker_thread(queue_name: str, log_cb):
+    """Run an RQ SimpleWorker in this thread (blocking)."""
     try:
-        proc = subprocess.Popen(
-            [
-                sys.executable, "-m", "rq", "worker",
-                "-u", REDIS_URL, queue_name,
-                "--worker-class", "rq.SimpleWorker",
-            ],
-            cwd=str(DATA_DIR),
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        from redis import Redis
+        from rq import Queue, SimpleWorker
+
+        conn = Redis.from_url(REDIS_URL)
+        q = Queue(queue_name, connection=conn)
+        w = SimpleWorker([q], connection=conn)
+        log_cb(f"Worker '{queue_name}' started")
+        w.work()  # blocking
     except Exception as e:
-        log_cb(f"ERROR: Worker {queue_name} failed to start: {e}")
-        return False
-
-    _processes.append(proc)
-    time.sleep(0.8)
-    if proc.poll() is not None:
-        log_cb(f"WARNING: {queue_name} worker exited (code {proc.returncode})")
-        return False
-    log_cb(f"Worker '{queue_name}' OK")
-    return True
+        if not _shutting_down:
+            log_cb(f"Worker '{queue_name}' ERROR: {e}")
 
 
-def start_web(log_cb):
-    """Start uvicorn web server."""
+def start_workers(log_cb) -> bool:
+    """Start RQ workers in background threads."""
+    global _worker_threads
+    queue_names = ["customer_eval:default", "inquiry_mail:default", "inquiry_mail:send"]
+    ok_count = 0
+    for q in queue_names:
+        if _shutting_down:
+            return False
+        t = threading.Thread(
+            target=_run_worker_thread, args=(q, log_cb),
+            daemon=True, name=f"rq-{q.replace(':','-')}"
+        )
+        t.start()
+        _worker_threads.append(t)
+        time.sleep(0.5)
+        if t.is_alive():
+            ok_count += 1
+            log_cb(f"Worker '{q}' OK")
+        else:
+            log_cb(f"WARNING: Worker '{q}' thread died")
+
+    return ok_count > 0
+
+
+def start_web(log_cb) -> bool:
+    """Start uvicorn web server in a background thread."""
+    global _web_thread
     log_cb(f"Starting web server (port {WEB_PORT})...")
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(MEIPASS)
-    if not os.environ.get("PLATFORM_DATA_DIR"):
-        env["PLATFORM_DATA_DIR"] = str(DATA_DIR)
-    try:
-        proc = subprocess.Popen(
-            [
-                sys.executable, "-m", "uvicorn", "src.core.app:app",
-                "--host", "127.0.0.1", "--port", WEB_PORT,
-                "--log-level", "warning",
-            ],
-            cwd=str(MEIPASS),
-            env=env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except Exception as e:
-        log_cb(f"ERROR: Web server failed to start: {e}")
-        return False
 
-    _processes.append(proc)
+    def _run_web():
+        try:
+            import uvicorn
+            uvicorn.run(
+                "src.core.app:app",
+                host="127.0.0.1",
+                port=int(WEB_PORT),
+                log_level="warning",
+            )
+        except Exception as e:
+            if not _shutting_down:
+                log_cb(f"Web server ERROR: {e}")
+
+    _web_thread = threading.Thread(
+        target=_run_web, daemon=True, name="uvicorn"
+    )
+    _web_thread.start()
     time.sleep(3.0)
-    if proc.poll() is not None:
-        log_cb(f"ERROR: Web server exited (code {proc.returncode})")
-        return False
-    log_cb(f"Web server OK → http://127.0.0.1:{WEB_PORT}")
-    return True
+    if _web_thread.is_alive():
+        log_cb(f"Web server OK -> http://127.0.0.1:{WEB_PORT}")
+        return True
+    log_cb(f"ERROR: Web server failed to start on port {WEB_PORT}")
+    return False
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -184,26 +212,21 @@ class LauncherGUI:
 
     def _build_ui(self):
         self.root = self.Tk()
-        self.root.title("外贸客户平台 - 启动器")
+        ver = "2.1.0"
+        self.root.title(f"Customer Platform - Launcher v{ver}")
         self.root.geometry("550x440")
         self.root.resizable(False, False)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        # Icon / branding
-        try:
-            self.root.iconbitmap(default=str(APP_DIR / "packaging" / "icon.ico"))
-        except Exception:
-            pass
-
         self.Label(
             self.root,
-            text="外贸客户平台 v2.1.0",
+            text=f"Customer Platform v{ver}",
             font=("Microsoft YaHei", 14, "bold"),
         ).pack(pady=(15, 2))
 
         self.Label(
             self.root,
-            text="服务状态控制台",
+            text="Service Console",
             font=("Consolas", 9),
             fg="#888",
         ).pack(pady=(0, 5))
@@ -225,19 +248,19 @@ class LauncherGUI:
         btn_frame = self.Frame(self.root)
         btn_frame.pack(pady=(0, 12))
         self.start_btn = self.Button(
-            btn_frame, text="启动全部服务", width=16,
+            btn_frame, text="Start All", width=16,
             command=self._start_all, bg="#007acc", fg="white",
             font=("Microsoft YaHei", 10),
         )
         self.start_btn.pack(side="left", padx=5)
         self.stop_btn = self.Button(
-            btn_frame, text="停止全部", width=12,
+            btn_frame, text="Stop All", width=12,
             command=self._stop_all, state=self.DISABLED,
             font=("Microsoft YaHei", 10),
         )
         self.stop_btn.pack(side="left", padx=5)
         self.open_btn = self.Button(
-            btn_frame, text="打开浏览器", width=14,
+            btn_frame, text="Open Browser", width=14,
             command=lambda: webbrowser.open(f"http://127.0.0.1:{WEB_PORT}"),
             state=self.DISABLED, font=("Microsoft YaHei", 10),
         )
@@ -260,32 +283,43 @@ class LauncherGUI:
         threading.Thread(target=self._start_services, daemon=True).start()
 
     def _start_services(self):
+        global _shutting_down
+        _shutting_down = False
+
         self._log("=" * 45)
         self._log(f"Root: {MEIPASS}")
         self._log(f"Data: {DATA_DIR}")
+        self._log(f"Frozen: {FROZEN}")
         self._log("=" * 45)
+
+        # Set up env
+        _setup_env()
 
         # 1. Redis
         if not start_redis(self._log):
-            self._log("\nRedis 启动失败，请检查端口 6379 是否被占用。")
+            self._log("\nRedis failed. Check if port 6379 is in use.")
             self.root.after(0, lambda: self.start_btn.configure(state=self.NORMAL))
             return
 
-        # 2. RQ Workers
-        for q in ("customer_eval:default", "inquiry_mail:default", "inquiry_mail:send"):
-            if _shutting_down:
-                return
-            start_worker(q, self._log)
-
-        # 3. Web server
         if _shutting_down:
             return
-        if not start_web(self._log):
-            self._log("\nWeb 服务启动失败，请检查端口 8000 是否被占用。")
+
+        # 2. RQ Workers (threads)
+        if not start_workers(self._log):
+            self._log("\nWorkers failed to start.")
             self.root.after(0, lambda: self.start_btn.configure(state=self.NORMAL))
             return
 
-        self._log("\n✓ 所有服务已启动！浏览器将自动打开 ...")
+        if _shutting_down:
+            return
+
+        # 3. Web server (thread)
+        if not start_web(self._log):
+            self._log(f"\nWeb server failed. Check if port {WEB_PORT} is in use.")
+            self.root.after(0, lambda: self.start_btn.configure(state=self.NORMAL))
+            return
+
+        self._log("\nAll services started! Opening browser...")
         webbrowser.open(f"http://127.0.0.1:{WEB_PORT}")
         self.root.after(0, self._on_ready)
 
@@ -294,9 +328,9 @@ class LauncherGUI:
         self.stop_btn.configure(state=self.NORMAL)
 
     def _stop_all(self):
-        self._log("\n正在停止所有服务 ...")
+        self._log("\nStopping all services...")
         _kill_all()
-        self._log("✓ 所有服务已停止。")
+        self._log("All services stopped.")
         self.stop_btn.configure(state=self.DISABLED)
         self.open_btn.configure(state=self.DISABLED)
         self.start_btn.configure(state=self.NORMAL)
