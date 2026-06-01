@@ -441,15 +441,22 @@ def run_eval_job(
                 raise RuntimeError("批量入队失败（重试3次后仍失败）")
 
             # 保存进度和 Redis job_next 键
+            # 注意：先保存 progress.json（文件 I/O 最可靠），再操作 Redis
             _save_progress(job_dir, n_total, batch_end, eff_batch)
-            _next_conn.setex(
-                f"job_next:{folder_job_id}", 86400,
-                json.dumps({"next_job_id": next_job.id, "batch_rows": n_batch,
-                            "batch_end": batch_end, "total_rows": n_total}),
-            )
+            try:
+                _next_conn.setex(
+                    f"job_next:{folder_job_id}", 86400,
+                    json.dumps({"next_job_id": next_job.id, "batch_rows": n_batch,
+                                "batch_end": batch_end, "total_rows": n_total}),
+                )
+            except Exception:
+                logger.warning("setex job_next 失败（非致命，progress.json 已保存）", exc_info=True)
             (job_dir / "rq_job_id.txt").write_text(next_job.id, encoding="utf-8")
             # 清除控制信号（用新连接确保可靠删除）
-            _next_conn.delete(f"job_control:{folder_job_id}")
+            try:
+                _next_conn.delete(f"job_control:{folder_job_id}")
+            except Exception:
+                pass
             _next_conn.close()
             # 同样用旧连接清理一次（防御）
             try:
@@ -473,13 +480,11 @@ def run_eval_job(
 
     except Exception:
         logger.exception("RQ job %s pipeline error", folder_job_id)
-        # 保存断点进度（不覆盖已有 progress.json，防止内层已保存的正确值被覆盖）
-        _prog_path = job_dir / "progress.json"
-        if not _prog_path.is_file():
-            try:
-                _save_progress(job_dir, n_total, batch_end, eff_batch)
-            except Exception:
-                pass
+        # 始终保存断点进度（覆盖旧值，确保前端继续时从正确位置开始）
+        try:
+            _save_progress(job_dir, n_total, batch_end, eff_batch)
+        except Exception:
+            pass
         _update_batch_status(folder_job_id, "paused")
         _ctrl_conn.delete(f"job_control:{folder_job_id}")
         return {"rows": total_processed, "total_rows": n_total, "error": True,
