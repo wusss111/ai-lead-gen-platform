@@ -8,7 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from src.core.auth import require_auth, apply_sales_filter
@@ -46,31 +46,43 @@ def get_emailable_customers(
     email_status: str = "",
     read_status: str = "",
     salesperson_id: str = "",
-    limit: int = 50,
+    email_empty: str = "",
+    country: str = "",
+    min_score: float | None = Query(None),
+    buyer_seller_role: str = "",
+    priority: str = "",
+    data_quality: str = "",
+    review_flag: str = "",
+    created_from: str = "",
+    created_to: str = "",
+    offset: int = 0,
+    limit: int = 200,
 ) -> JSONResponse:
-    """List customers that can receive inquiry emails."""
+    """List customers for inquiry mail (supports pagination)."""
     db = get_db()
-    where = [
-        "c.contact_email IS NOT NULL",
-        "c.contact_email != ''",
-    ]
+    where: list[str] = []
     params: list[Any] = []
+
     if search.strip():
-        where.append("(c.company_name LIKE ? OR c.contact_email LIKE ?)")
+        where.append("(c.company_name LIKE ? OR c.contact_name LIKE ? OR c.contact_email LIKE ? OR c.website LIKE ?)")
         kw = f"%{search.strip()}%"
-        params.extend([kw, kw])
+        params.extend([kw, kw, kw, kw])
+
     if deal_recommendation.strip():
         where.append("c.deal_recommendation = ?")
         params.append(deal_recommendation.strip())
+
     if email_status.strip():
         where.append("c.email_status = ?")
         params.append(email_status.strip())
+
     if read_status.strip() == "read":
         where.append("c.tracking_last_opened_at IS NOT NULL")
     elif read_status.strip() == "unread":
         where.append("(c.email_status = 'sent' AND c.tracking_last_opened_at IS NULL)")
     elif read_status.strip() == "unsent":
         where.append("(c.email_status IS NULL OR c.email_status NOT IN ('sent','failed'))")
+
     if salesperson_id.strip():
         if salesperson_id.strip() == "unassigned":
             where.append("c.assigned_salesperson_id IS NULL")
@@ -78,7 +90,47 @@ def get_emailable_customers(
             where.append("c.assigned_salesperson_id = ?")
             params.append(int(salesperson_id))
     apply_sales_filter(where, params, user)
-    where_clause = " AND ".join(where)
+
+    # Default to customers WITH email (inquiry mail needs an address to send to).
+    # email_empty="" (default) or "0" → has email; "1" → no email.
+    if email_empty.strip() == '1':
+        where.append("(c.contact_email IS NULL OR c.contact_email = '')")
+    else:
+        where.append("c.contact_email IS NOT NULL AND c.contact_email != ''")
+
+    if country.strip():
+        where.append("c.country_region LIKE ?")
+        params.append(f"%{country.strip()}%")
+
+    if min_score is not None:
+        where.append("c.overall_score_computed >= ?")
+        params.append(min_score)
+
+    if buyer_seller_role.strip():
+        where.append("c.buyer_seller_role = ?")
+        params.append(buyer_seller_role.strip())
+
+    if priority.strip():
+        where.append("c.priority = ?")
+        params.append(priority.strip())
+
+    if data_quality.strip():
+        where.append("c.data_quality = ?")
+        params.append(data_quality.strip())
+
+    if review_flag.strip():
+        where.append("c.manual_review_flag = ?")
+        params.append(review_flag.strip())
+
+    if created_from.strip():
+        where.append("c.created_at >= ?")
+        params.append(created_from.strip())
+
+    if created_to.strip():
+        where.append("c.created_at <= ?")
+        params.append(created_to.strip() + " 23:59:59")
+
+    where_clause = " AND ".join(where) if where else "1=1"
     rows = db.execute(
         f"SELECT c.id, c.company_name, c.contact_name, c.contact_email, c.country_region, "
         f"c.deal_recommendation, c.overall_score_computed, c.email_status, "
@@ -86,8 +138,8 @@ def get_emailable_customers(
         f"c.tracking_last_opened_at "
         f"FROM customer c "
         f"LEFT JOIN salesperson s ON c.assigned_salesperson_id = s.id "
-        f"WHERE {where_clause} ORDER BY c.overall_score_computed DESC LIMIT ?",
-        params + [limit],
+        f"WHERE {where_clause} ORDER BY c.overall_score_computed DESC LIMIT ? OFFSET ?",
+        params + [limit, offset],
     ).fetchall()
     return JSONResponse(dicts_from_rows(rows))
 
