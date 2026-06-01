@@ -337,6 +337,16 @@ def _extract_contacts_from_pages(pages: list[dict], row_email: str = "", row_pho
     return result
 
 
+def _extract_social_from_pages(pages: list[dict]) -> str:
+    """从抓取页面中提取社交媒体链接，返回 JSON 字符串。
+    fetch_pages_for_website_field 已在页面中写入 extracted_social 字段。
+    """
+    for p in pages:
+        if p.get("ok") and p.get("extracted_social"):
+            return _json.dumps(p["extracted_social"], ensure_ascii=False)
+    return ""
+
+
 def _save_skipped_row(
     db: Any, batch_id: str, row_index: int, row: pd.Series, result: dict,
 ) -> None:
@@ -348,6 +358,7 @@ def _save_skipped_row(
     contacts = _extract_contacts_from_pages(
         pages, _cell(row.get("contact_email", "")), _cell(row.get("contact_phone", ""))
     )
+    social_profiles = _extract_social_from_pages(pages)
     data = {
         "company_name": name,
         "website": result.get("website", _cell(row.get("website", ""))),
@@ -355,6 +366,7 @@ def _save_skipped_row(
         "contact_phone": _cell(row.get("contact_phone", "")),
         "country_region": _cell(row.get("country_region", "")),
         "fetched_pages": _fmt_pages(pages),
+        "social_profiles": social_profiles,
         "product_fit_reasons": f"说明：{result.get('reason', '跳过')}。",
         "errors": result.get("errors", result.get("reason", "")),
         "manual_review_flag": "YES",
@@ -401,6 +413,7 @@ def _save_eval_row(
     contacts = _extract_contacts_from_pages(
         pages, _cell(row.get("contact_email", "")), _cell(row.get("contact_phone", ""))
     )
+    social_profiles = _extract_social_from_pages(pages)
     data = {
         "company_name": result.get("name", _cell(row.get("company_name", ""))),
         "website": result.get("website", _cell(row.get("website", ""))),
@@ -412,6 +425,7 @@ def _save_eval_row(
         "target_products": _cell(row.get("target_products", "")),
         "notes": _cell(row.get("notes", "")),
         "fetched_pages": _fmt_pages(pages),
+        "social_profiles": social_profiles,
         **flat,
         "overall_score_computed": overall,
         "manual_review_flag": manual_review_flag(
@@ -441,7 +455,7 @@ def _insert_or_replace(db: Any, batch_id: str, row_index: int, data: dict) -> No
         "confidence", "data_quality",
         "fetched_pages", "errors",
         "overall_score_computed", "manual_review_flag", "eval_json",
-        "contact_emails_all",
+        "contact_emails_all", "social_profiles",
     ]
     values = [batch_id, row_index + 1]
     for c in cols[2:]:
