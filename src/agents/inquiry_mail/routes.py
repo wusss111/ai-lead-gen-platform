@@ -55,10 +55,11 @@ def get_emailable_customers(
     review_flag: str = "",
     created_from: str = "",
     created_to: str = "",
+    sort: str = "-created_at",
     offset: int = 0,
     limit: int = 200,
 ) -> JSONResponse:
-    """List customers for inquiry mail (supports pagination)."""
+    """List customers for inquiry mail (supports pagination, aligned with CRM)."""
     db = get_db()
     where: list[str] = []
     params: list[Any] = []
@@ -91,11 +92,10 @@ def get_emailable_customers(
             params.append(int(salesperson_id))
     apply_sales_filter(where, params, user)
 
-    # Default to customers WITH email (inquiry mail needs an address to send to).
-    # email_empty="" (default) or "0" → has email; "1" → no email.
+    # Align with CRM: email_empty="" (default) → show all; "1" → no email; "0" → has email
     if email_empty.strip() == '1':
         where.append("(c.contact_email IS NULL OR c.contact_email = '')")
-    else:
+    elif email_empty.strip() == '0':
         where.append("c.contact_email IS NOT NULL AND c.contact_email != ''")
 
     if country.strip():
@@ -131,6 +131,26 @@ def get_emailable_customers(
         params.append(created_to.strip() + " 23:59:59")
 
     where_clause = " AND ".join(where) if where else "1=1"
+
+    # Count (align with CRM pagination)
+    count_row = db.execute(
+        f"SELECT COUNT(*) as cnt FROM customer c "
+        f"LEFT JOIN salesperson s ON c.assigned_salesperson_id = s.id "
+        f"WHERE {where_clause}", params
+    ).fetchone()
+    total = count_row["cnt"] if count_row else 0
+
+    # Sort (align with CRM)
+    allowed_sort = {
+        "-created_at": "c.created_at DESC",
+        "created_at": "c.created_at ASC",
+        "-overall_score_computed": "c.overall_score_computed DESC",
+        "overall_score_computed": "c.overall_score_computed ASC",
+        "company_name": "c.company_name ASC",
+        "-company_name": "c.company_name DESC",
+    }
+    order = allowed_sort.get(sort, "c.created_at DESC")
+
     rows = db.execute(
         f"SELECT c.id, c.company_name, c.contact_name, c.contact_email, c.country_region, "
         f"c.deal_recommendation, c.overall_score_computed, c.email_status, "
@@ -138,10 +158,18 @@ def get_emailable_customers(
         f"c.tracking_last_opened_at "
         f"FROM customer c "
         f"LEFT JOIN salesperson s ON c.assigned_salesperson_id = s.id "
-        f"WHERE {where_clause} ORDER BY c.overall_score_computed DESC LIMIT ? OFFSET ?",
+        f"WHERE {where_clause} ORDER BY {order} LIMIT ? OFFSET ?",
         params + [limit, offset],
     ).fetchall()
-    return JSONResponse(dicts_from_rows(rows))
+
+    customers = dicts_from_rows(rows)
+    return JSONResponse({
+        "customers": customers,
+        "total": total,
+        "page": (offset // limit) + 1 if limit > 0 else 1,
+        "page_size": limit,
+        "total_pages": max(1, (total + limit - 1) // limit) if limit > 0 else 1,
+    })
 
 
 @router.post("/api/generate")
